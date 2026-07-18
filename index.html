@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>VocaTest · 보카테스트</title>
+
+<!-- 한글 최적화 폰트 -->
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+
+<!-- Tailwind Play CDN -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'Roboto', 'sans-serif'],
+        },
+        colors: {
+          brand:   { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca' },
+          grass:   { 50:'#f0fdf4',400:'#4ade80',500:'#22c55e',600:'#16a34a' },
+          coral:   { 50:'#fff1f2',400:'#fb7185',500:'#f43f5e',600:'#e11d48' },
+        },
+        boxShadow: {
+          soft: '0 10px 30px -12px rgba(79,70,229,0.25)',
+          card: '0 12px 40px -16px rgba(30,41,59,0.20)',
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  html,body{ -webkit-tap-highlight-color: transparent; overscroll-behavior-y: contain; }
+  body{
+    background:
+      radial-gradient(1200px 500px at 10% -5%, #eef2ff 0%, transparent 55%),
+      radial-gradient(1000px 460px at 110% 0%, #fdf2ff 0%, transparent 50%),
+      linear-gradient(180deg,#fbfcff 0%,#f6f7ff 100%);
+    min-height:100dvh;
+  }
+  /* 듀오링고식 눌리는 3D 버튼 */
+  .btn3d{ position:relative; border:none; border-radius:1rem; font-weight:800; transition:transform .05s ease, filter .15s ease; will-change:transform; }
+  .btn3d::after{ content:""; position:absolute; inset:0; border-radius:inherit; box-shadow: inset 0 -4px 0 rgba(0,0,0,.18); pointer-events:none; }
+  .btn3d{ box-shadow: 0 4px 0 0 var(--btn-edge, rgba(0,0,0,.18)); }
+  .btn3d:active{ transform: translateY(4px); box-shadow: 0 0px 0 0 var(--btn-edge, rgba(0,0,0,.18)); }
+  .btn3d:disabled{ opacity:.55; }
+
+  @keyframes pop      { 0%{transform:scale(.9);opacity:0} 60%{transform:scale(1.03)} 100%{transform:scale(1);opacity:1} }
+  @keyframes slideUp  { from{transform:translateY(14px);opacity:0} to{transform:translateY(0);opacity:1} }
+  @keyframes shake    { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-9px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-6px)} 80%{transform:translateX(4px)} }
+  @keyframes bounceIn { 0%{transform:scale(.6);opacity:0} 55%{transform:scale(1.12)} 100%{transform:scale(1);opacity:1} }
+  @keyframes floaty   { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+  .anim-pop   { animation: pop .28s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-slide { animation: slideUp .35s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-shake { animation: shake .45s cubic-bezier(.36,.07,.19,.97) both; }
+  .anim-in    { animation: bounceIn .5s cubic-bezier(.2,.8,.2,1) both; }
+  .floaty     { animation: floaty 3s ease-in-out infinite; }
+
+  .progressbar > i{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#818cf8,#22c55e); transition:width .5s cubic-bezier(.2,.8,.2,1); }
+
+  input::placeholder{ color:#c7cbd6; }
+  /* iOS zoom 방지: 폰트 16px 이상 */
+  input, button, textarea{ font-size:16px; }
+  .no-scrollbar::-webkit-scrollbar{ display:none; }
+  .no-scrollbar{ -ms-overflow-style:none; scrollbar-width:none; }
+
+  @media (prefers-reduced-motion: reduce){
+    .anim-pop,.anim-slide,.anim-shake,.anim-in,.floaty{ animation:none !important; }
+  }
+</style>
+</head>
+
+<body class="font-sans text-slate-800 antialiased">
+  <div id="app" class="mx-auto w-full max-w-md px-4 pb-24 pt-5 sm:max-w-lg"></div>
+  <canvas id="fx" class="pointer-events-none fixed inset-0 z-50 hidden h-full w-full"></canvas>
+  <div id="toast" class="pointer-events-none fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 opacity-0 transition-all duration-300"></div>
+
+<script>
+/* ============================================================
+   VocaTest (보카테스트) — 원격 영단어 테스트 (Single File)
+   - 선생님: 단어장 관리 · 테스트 생성 · 세션 관리(만료)
+   - 학생: 링크 접속 → 4지선다 / 스펠링 → 오답 무한반복 → 결과카드
+   ============================================================ */
+
+/* ---------- 저장소 ---------- */
+const DB = {
+  words()   {
+    let arr; try{ arr = JSON.parse(localStorage.getItem('vpang.words')||'[]') }catch(e){ arr=[] }
+    let changed=false;
+    arr.forEach(w=>{ if(!w.id){ w.id=uid(8); changed=true; } if(w.folderId===undefined){ w.folderId=null; changed=true; } });
+    if(changed) localStorage.setItem('vpang.words', JSON.stringify(arr));
+    return arr;
+  },
+  saveWords(w){ localStorage.setItem('vpang.words', JSON.stringify(w)); },
+  folders() { try{ return JSON.parse(localStorage.getItem('vpang.folders')||'[]') }catch(e){ return [] } },
+  saveFolders(f){ localStorage.setItem('vpang.folders', JSON.stringify(f)); },
+  sessions(){ try{ return JSON.parse(localStorage.getItem('vpang.sessions')||'[]') }catch(e){ return [] } },
+  saveSessions(s){ localStorage.setItem('vpang.sessions', JSON.stringify(s)); },
+};
+
+/* ---------- 유틸 ---------- */
+const $ = (sel, el=document) => el.querySelector(sel);
+const app = document.getElementById('app');
+
+function uid(n=10){
+  const c='abcdefghijkmnpqrstuvwxyz23456789';
+  let s=''; for(let i=0;i<n;i++) s+=c[Math.floor(Math.random()*c.length)];
+  return s;
+}
+function esc(str){ return String(str??'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+/* ---------- 폴더 유틸 (상위/하위 폴더 트리) ---------- */
+function folderChildren(folders, parentId){ return folders.filter(f=>(f.parentId||null)===(parentId||null)); }
+function folderDescendantIds(folders, id){ // id(자기 자신) + 모든 하위 폴더 id
+  const ids=[id]; let frontier=[id];
+  while(frontier.length){
+    const next = folders.filter(f=>frontier.includes(f.parentId)).map(f=>f.id);
+    ids.push(...next); frontier=next;
+  }
+  return ids;
+}
+function folderPath(folders, id){ // 최상위→id 순 breadcrumb
+  const path=[]; let cur=folders.find(f=>f.id===id);
+  while(cur){ path.unshift(cur); cur=folders.find(f=>f.id===cur.parentId); }
+  return path;
+}
+// folderId===null → 전체(모든 단어), recursive=true면 하위 폴더까지 포함
+function wordsInFolder(words, folders, folderId, recursive=true){
+  if(folderId==null) return recursive ? words.slice() : words.filter(w=>(w.folderId||null)===null);
+  const ids = recursive ? folderDescendantIds(folders, folderId) : [folderId];
+  return words.filter(w=> ids.includes(w.folderId||null));
+}
+function folderTreeFlat(folders){ // 들여쓰기용 depth 포함 평탄화 목록 (전체 펼침, 모달용)
+  const list=[];
+  (function walk(parentId, depth){
+    folderChildren(folders, parentId).forEach(f=>{ list.push({...f, depth}); walk(f.id, depth+1); });
+  })(null,0);
+  return list;
+}
+// 트리 뷰용: expanded 에 담긴 폴더만 하위를 펼쳐서 보여주는 "현재 보이는" 목록 (shift 범위선택 기준)
+function visibleFolderRows(folders, expanded){
+  const list=[];
+  (function walk(parentId, depth){
+    folderChildren(folders, parentId).forEach(f=>{
+      list.push({...f, depth});
+      if(expanded.has(f.id)) walk(f.id, depth+1);
+    });
+  })(null,0);
+  return list;
+}
+// id를 newParentId 밑으로 옮겨도 사이클(자기 자신의 하위로 들어가기)이 안 생기는지 검사
+function canReparent(folders, folderId, newParentId){
+  if(newParentId===folderId) return false;
+  return !folderDescendantIds(folders, folderId).includes(newParentId);
+}
+// 폴더 id 목록을 targetId 밑으로 재배치. 사이클이 생기는 건 건너뜀. { moved, blocked } 반환
+function reparentFolders(ids, targetId){
+  const folders = DB.folders();
+  let moved=0, blocked=0;
+  ids.forEach(id=>{
+    const f = folders.find(x=>x.id===id);
+    if(!f || (f.parentId||null)===(targetId||null) || id===targetId) return;
+    if(!canReparent(folders, id, targetId||null)){ blocked++; return; }
+    f.parentId = targetId||null; moved++;
+  });
+  if(moved) DB.saveFolders(folders);
+  return { moved, blocked };
+}
+// 폴더(+하위 폴더+단어) 전체를 새 id로 복제해 newParentId 밑에 붙임. 최상위 이름엔 '복사본' 표시
+function cloneFolderTree(folders, words, srcId, newParentId){
+  const newFolders=[], newWords=[];
+  (function walk(fid, parentId, isRoot){
+    const orig = folders.find(f=>f.id===fid); if(!orig) return;
+    const nf = { id:uid(8), name: isRoot? `${orig.name} 복사본` : orig.name, parentId };
+    newFolders.push(nf);
+    words.filter(w=>(w.folderId||null)===fid).forEach(w=> newWords.push({ id:uid(8), en:w.en, ko:w.ko, folderId:nf.id }));
+    folderChildren(folders, fid).forEach(c=> walk(c.id, nf.id, false));
+  })(srcId, newParentId||null, true);
+  return { newFolders, newWords };
+}
+// 폴더 클립보드({ids, mode:'copy'|'cut'})를 targetId 밑에 붙여넣기. 결과 요약 반환
+function pasteFolderClipboard(clip, targetId){
+  if(!clip || !clip.ids || !clip.ids.length) return null;
+  if(clip.mode==='cut'){
+    const { moved, blocked } = reparentFolders(clip.ids, targetId);
+    return { mode:'cut', moved, blocked };
+  }
+  const folders=DB.folders(), words=DB.words();
+  let addF=[], addW=[];
+  clip.ids.forEach(id=>{
+    if(!folders.find(f=>f.id===id)) return;
+    const { newFolders, newWords } = cloneFolderTree(folders, words, id, targetId);
+    addF=addF.concat(newFolders); addW=addW.concat(newWords);
+  });
+  if(addF.length) DB.saveFolders(folders.concat(addF));
+  if(addW.length) DB.saveWords(words.concat(addW));
+  return { mode:'copy', count: clip.ids.length };
+}
+
+// UTF-8 안전 Base64 (URL-safe)
+function b64enc(obj){
+  const json = JSON.stringify(obj);
+  const b = btoa(unescape(encodeURIComponent(json)));
+  return b.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64dec(str){
+  try{
+    let s = str.replace(/-/g,'+').replace(/_/g,'/');
+    while(s.length%4) s+='=';
+    return JSON.parse(decodeURIComponent(escape(atob(s))));
+  }catch(e){ return null; }
+}
+
+/* ---------- 무결성 서명 (URL 위·변조 방지) ---------- */
+// 이 값은 링크의 만료일/단어를 학생이 임의로 바꾸지 못하게 막는 열쇠입니다.
+// 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
+const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
+function fnv1a(str){ // 결정적 32bit 해시 → base36
+  let h = 0x811c9dc5;
+  for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h>>>0).toString(36);
+}
+function sigString(p){
+  const w = (p.w||[]).map(x=>x.e+'\u241f'+x.k).join('\u241e');
+  return [SIG_SALT, p.s, p.exp||0, p.mode, p.sec, p.dm||'', p.dv||'', p.dt||'', w].join('\u2016');
+}
+function buildLink(p){ // p: sig 없는 payload → 서명 붙여 링크 반환
+  const signed = { ...p, g: fnv1a(sigString(p)) };
+  return location.origin + location.pathname + '?session=' + p.s + '&d=' + b64enc(signed);
+}
+function verifyPayload(p){
+  if(!p || !p.g) return false;
+  const { g, ...rest } = p;
+  return fnv1a(sigString(rest)) === g;
+}
+
+/* ---------- 영단어 → 뜻 자동 번역 (EN→KO) ---------- */
+async function translateWord(en){
+  const q = encodeURIComponent(en.trim());
+  // 1순위: Google 번역(gtx) — 단어 번역 품질이 좋음
+  try{
+    const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=${q}`);
+    if(r.ok){
+      const j = await r.json();
+      const t = (j && j[0] ? j[0].map(x=>x[0]).join('') : '').trim();
+      if(t && t.toLowerCase()!==en.trim().toLowerCase()) return t;
+    }
+  }catch(e){}
+  // 2순위: MyMemory (무료·키 불필요)
+  try{
+    const r = await fetch(`https://api.mymemory.translated.net/get?q=${q}&langpair=en|ko`);
+    if(r.ok){
+      const j = await r.json();
+      const t = (j && j.responseData ? (j.responseData.translatedText||'') : '').trim();
+      if(t && !/^[a-zA-Z\s]+$/.test(t)) return t; // 영어 그대로 돌아오면 실패로 간주
+    }
+  }catch(e){}
+  return null;
+}
+
+/* ---------- 결과 서버 전송 (구글시트 웹훅) ---------- */
+function newToken(){ return uid(20); }
+function deliveryCfg(){
+  let c=null;
+  try{ c=JSON.parse(localStorage.getItem('vpang.delivery')||'null'); }catch(e){}
+  if(!c) c = { mode:'hook', url:'', token:newToken() };
+  if(!c.token) c.token = newToken();     // 기존 설정 마이그레이션
+  if(c.mode==='ntfy') c.mode='hook';      // 구글시트 전용으로 통일
+  localStorage.setItem('vpang.delivery', JSON.stringify(c));
+  return c;
+}
+function saveDelivery(c){ localStorage.setItem('vpang.delivery', JSON.stringify(c)); }
+
+// 학생 완료 시 결과 전송. dm:'hook'|'', dv:웹훅 URL, dt:비밀 토큰
+async function sendResult(dm, dv, dt, result){
+  try{
+    if(dm==='hook' && dv){
+      // 구글 Apps Script 웹훅: CORS 프리플라이트 회피 위해 text/plain + no-cors
+      await fetch(dv, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+                        body:JSON.stringify({ ...result, token: dt||'' }) });
+      return true; // no-cors는 응답 확인 불가 → 전송 시도 성공으로 간주
+    }
+  }catch(e){}
+  return false;
+}
+
+// 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
+function askConfirm(msg, okLabel='삭제'){
+  return new Promise(resolve=>{
+    const ov=document.createElement('div');
+    ov.className='fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-6 anim-in';
+    ov.innerHTML=`<div class="w-full max-w-xs rounded-3xl bg-white p-6 shadow-card">
+      <p class="mb-5 whitespace-pre-line text-center text-sm font-bold leading-relaxed text-slate-700">${esc(msg)}</p>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="cf-no" class="btn3d bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+        <button id="cf-yes" class="btn3d bg-coral-500 py-3 text-sm font-bold text-white" style="--btn-edge:#e11d48">${esc(okLabel)}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const done=(v)=>{ ov.remove(); resolve(v); };
+    ov.querySelector('#cf-no').onclick=()=>done(false);
+    ov.querySelector('#cf-yes').onclick=()=>done(true);
+    ov.addEventListener('click',e=>{ if(e.target===ov) done(false); });
+  });
+}
+
+// 앱 내부 텍스트 입력창 (native prompt 대체 — 폴더 이름 등)
+function askPrompt(msg, placeholder='', okLabel='확인', defVal=''){
+  return new Promise(resolve=>{
+    const ov=document.createElement('div');
+    ov.className='fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 p-6 anim-in';
+    ov.innerHTML=`<div class="w-full max-w-xs rounded-3xl bg-white p-6 shadow-card">
+      <p class="mb-3 whitespace-pre-line text-center text-sm font-bold leading-relaxed text-slate-700">${esc(msg)}</p>
+      <input id="pf-input" value="${esc(defVal)}" placeholder="${esc(placeholder)}" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-center font-semibold outline-none focus:border-brand-400" />
+      <div class="grid grid-cols-2 gap-2">
+        <button id="pf-no" class="btn3d bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+        <button id="pf-yes" class="btn3d bg-brand-500 py-3 text-sm font-bold text-white" style="--btn-edge:#4338ca">${esc(okLabel)}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const inp=ov.querySelector('#pf-input');
+    setTimeout(()=>{ inp.focus(); inp.select(); },30);
+    const done=(v)=>{ ov.remove(); resolve(v); };
+    ov.querySelector('#pf-no').onclick=()=>done(null);
+    ov.querySelector('#pf-yes').onclick=()=>done(inp.value.trim());
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); done(inp.value.trim()); } });
+    ov.addEventListener('click',e=>{ if(e.target===ov) done(null); });
+  });
+}
+
+// 폴더 선택창 (단어 이동 / 테스트 출제범위 선택 공용)
+function pickFolderModal(folders, title='폴더 선택', words=DB.words()){
+  return new Promise(resolve=>{
+    const tree = folderTreeFlat(folders);
+    const rootCnt = words.length;
+    const ov=document.createElement('div');
+    ov.className='fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 p-4 sm:items-center anim-in';
+    ov.innerHTML=`<div class="max-h-[70vh] w-full max-w-xs overflow-y-auto rounded-3xl bg-white p-5 shadow-card">
+      <p class="mb-3 text-center text-sm font-black text-slate-700">${esc(title)}</p>
+      <div class="flex flex-col gap-1.5">
+        <button data-pick="" class="rounded-xl bg-brand-50 px-3 py-2.5 text-left text-sm font-bold text-brand-700">📚 전체 단어장 <span class="text-xs font-normal text-brand-400">(${rootCnt})</span></button>
+        ${tree.map(f=>{
+          const cnt = wordsInFolder(words, folders, f.id, true).length;
+          return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-slate-50">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
+        }).join('')}
+      </div>
+      <button id="pk-cancel" class="btn3d mt-4 w-full bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+    </div>`;
+    document.body.appendChild(ov);
+    const done=(v)=>{ ov.remove(); resolve(v); };
+    ov.querySelectorAll('[data-pick]').forEach(b=> b.onclick=()=> done(b.dataset.pick || null));
+    ov.querySelector('#pk-cancel').onclick=()=>done(undefined);
+    ov.addEventListener('click', e=>{ if(e.target===ov) done(undefined); });
+  });
+}
+
+function toast(msg, type='ok'){
+  const t = document.getElementById('toast');
+  const color = type==='ok' ? 'bg-slate-900' : type==='bad' ? 'bg-coral-600' : 'bg-brand-600';
+  t.innerHTML = `<div class="${color} rounded-2xl px-5 py-3 text-sm font-bold text-white shadow-card">${esc(msg)}</div>`;
+  t.style.opacity='1'; t.style.transform='translate(-50%, 0)';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translate(-50%, 10px)'; }, 1900);
+}
+
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    let ok=false; try{ ok=document.execCommand('copy'); }catch(_){}
+    document.body.removeChild(ta); return ok;
+  }
+}
+
+// 사운드 (선택적, 실패 무시)
+let _ac=null;
+function beep(good){
+  try{
+    _ac = _ac || new (window.AudioContext||window.webkitAudioContext)();
+    const o=_ac.createOscillator(), g=_ac.createGain();
+    o.connect(g); g.connect(_ac.destination);
+    o.type='sine';
+    const now=_ac.currentTime;
+    if(good){ o.frequency.setValueAtTime(660,now); o.frequency.setValueAtTime(880,now+0.09); }
+    else    { o.frequency.setValueAtTime(300,now); o.frequency.setValueAtTime(200,now+0.12); }
+    g.gain.setValueAtTime(0.0001,now); g.gain.exponentialRampToValueAtTime(0.14,now+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+0.28);
+    o.start(now); o.stop(now+0.3);
+  }catch(e){}
+}
+
+// 컨페티
+function confetti(){
+  const cv=document.getElementById('fx'); cv.classList.remove('hidden');
+  const ctx=cv.getContext('2d'); cv.width=innerWidth; cv.height=innerHeight;
+  const colors=['#6366f1','#22c55e','#fb7185','#f59e0b','#38bdf8','#a78bfa'];
+  const P=Array.from({length:150},()=>({
+    x:innerWidth/2+(Math.random()-0.5)*120, y:innerHeight*0.35,
+    vx:(Math.random()-0.5)*11, vy:Math.random()*-13-4,
+    s:6+Math.random()*7, c:colors[Math.floor(Math.random()*colors.length)],
+    r:Math.random()*Math.PI, vr:(Math.random()-0.5)*0.35
+  }));
+  let f=0;
+  (function loop(){
+    f++; ctx.clearRect(0,0,cv.width,cv.height);
+    P.forEach(p=>{ p.vy+=0.32; p.x+=p.vx; p.y+=p.vy; p.r+=p.vr;
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.r); ctx.fillStyle=p.c;
+      ctx.fillRect(-p.s/2,-p.s/2,p.s,p.s*0.6); ctx.restore();
+    });
+    if(f<130) requestAnimationFrame(loop); else cv.classList.add('hidden');
+  })();
+}
+
+/* ============================================================
+   라우팅
+   ============================================================ */
+function boot(){
+  const q = new URLSearchParams(location.search);
+  const session = q.get('session');
+  if(session){ StudentApp(session, q.get('d')); }
+  else { TeacherApp(); }
+}
+
+/* ============================================================
+   선생님 앱
+   ============================================================ */
+let teacherTab = 'words';
+
+function TeacherApp(){
+  render();
+  function render(){
+    app.innerHTML = `
+      <header class="mb-4 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="grid h-11 w-11 place-items-center rounded-2xl bg-brand-500 text-2xl shadow-soft floaty">📚</div>
+          <div>
+            <h1 class="text-xl font-extrabold tracking-tight">VocaTest</h1>
+            <p class="text-xs font-medium text-slate-400">보카테스트 · 선생님용</p>
+          </div>
+        </div>
+      </header>
+
+      <nav class="mb-5 grid grid-cols-4 gap-1 rounded-2xl bg-white p-1.5 shadow-card">
+        ${tabBtn('words','단어장','📝')}
+        ${tabBtn('make','만들기','🎯')}
+        ${tabBtn('sessions','세션','🔑')}
+        ${tabBtn('results','결과','📊')}
+      </nav>
+
+      <main id="tab"></main>
+    `;
+    app.querySelectorAll('[data-tab]').forEach(b=> b.onclick=()=>{ teacherTab=b.dataset.tab; render(); });
+    const tab = $('#tab');
+    if(teacherTab==='words') renderWords(tab);
+    else if(teacherTab==='make') renderMake(tab);
+    else if(teacherTab==='sessions') renderSessions(tab);
+    else renderResultsTab(tab);
+  }
+  function tabBtn(id,label,icon){
+    const on = teacherTab===id;
+    return `<button data-tab="${id}" class="flex flex-col items-center gap-0.5 rounded-xl py-2 text-xs font-bold transition ${on?'bg-brand-500 text-white shadow-soft':'text-slate-400'}">
+      <span class="text-base">${icon}</span>${label}</button>`;
+  }
+}
+
+/* ---------- 탭: 단어장 ---------- */
+// "apple 사과", "apple, 사과", "apple 사과 run 달리다" 등을 영어/한글 자동 구분해 (en,ko)로 매칭
+function parsePairs(raw){
+  const isKo = c => /[\uAC00-\uD7A3\u3131-\u318E]/.test(c);
+  const isEn = c => /[A-Za-z0-9]/.test(c);
+  const rawTokens = raw.split(/[,;\n\r\t]+/).map(s=>s.trim()).filter(Boolean);
+  const frags=[];
+  rawTokens.forEach((tok, tokIdx)=>{
+    let en='',ko='',phase='en';
+    const push=()=>{ en=en.trim(); ko=ko.trim(); if(en||ko) frags.push({en,ko,tok:tokIdx}); en='';ko='';phase='en'; };
+    for(const ch of tok){
+      if(isKo(ch)){ phase='ko'; ko+=ch; }
+      else if(isEn(ch)){ if(phase==='ko'){ push(); } phase='en'; en+=ch; }
+      else { if(phase==='en') en+=ch; else ko+=ch; }
+    }
+    push();
+  });
+  const pairs=[];
+  for(let i=0;i<frags.length;i++){
+    const f=frags[i], nx=frags[i+1];
+    if(f.en && f.ko){ pairs.push({en:f.en, ko:f.ko}); }
+    else if(f.en && !f.ko){
+      if(nx && !nx.en && nx.ko){ pairs.push({en:f.en,ko:nx.ko}); i++; }
+      else pairs.push({en:f.en,ko:''});
+    } else if(!f.en && f.ko){
+      // "뜻 en" 뒤집힌 순서는 콤마로 안 나뉜 같은 토큰일 때만 인정 (다른 토큰이면 새 단어의 시작일 뿐)
+      if(nx && nx.en && !nx.ko && nx.tok===f.tok){ pairs.push({en:nx.en,ko:f.ko}); i++; }
+      else {
+        // 앞선 en에 딸린 추가 뜻(콤마로 나열된 두 번째 이후 의미) — 버리지 않고 이어붙임
+        const p=pairs[pairs.length-1];
+        if(p && p.en) p.ko = p.ko ? `${p.ko}, ${f.ko}` : f.ko;
+      }
+    }
+  }
+  return pairs;
+}
+
+let curFolder = null;       // 현재 보고 있는 폴더 id (null = 최상위) — 단어 추가/목록의 대상
+let selWords = new Set();   // 다중 선택된 단어 id
+let selAnchor = null;       // Shift 범위 선택 기준점(단어 id)
+let treeSel = new Set();    // 폴더 트리에서 다중 선택된 폴더 id (자르기/복사/삭제용)
+let treeAnchor = null;      // 폴더 트리 Shift 범위선택 기준점(폴더 id)
+let treeExpanded = new Set(); // 펼쳐진 폴더 id
+let folderClipboard = null; // {ids:[...], mode:'copy'|'cut'} — Ctrl+C/X/V 및 붙여넣기 버튼용
+
+function refreshWordsTab(){ const t=document.getElementById('tab'); if(t && teacherTab==='words') renderWords(t); }
+
+// 폴더 잘라내기/복사/붙여넣기 단축키 (입력창 포커스 중이면 무시)
+document.addEventListener('keydown', (e)=>{
+  if(teacherTab!=='words') return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if(tag==='INPUT' || tag==='TEXTAREA') return;
+  if(!(e.ctrlKey||e.metaKey)) return;
+  const key = e.key.toLowerCase();
+  if(key==='c' && treeSel.size){
+    e.preventDefault(); folderClipboard={ids:[...treeSel], mode:'copy'};
+    toast(`${treeSel.size}개 폴더 복사됨 (Ctrl+V로 붙여넣기)`); refreshWordsTab();
+  } else if(key==='x' && treeSel.size){
+    e.preventDefault(); folderClipboard={ids:[...treeSel], mode:'cut'};
+    toast(`${treeSel.size}개 폴더 잘라내기됨 (Ctrl+V로 붙여넣기)`); refreshWordsTab();
+  } else if(key==='v' && folderClipboard){
+    e.preventDefault();
+    const res = pasteFolderClipboard(folderClipboard, curFolder);
+    folderClipboard=null;
+    if(res){
+      if(res.mode==='cut'){ if(res.moved) toast(`${res.moved}개 폴더 이동했어요 📁`); if(res.blocked) toast(`${res.blocked}개는 하위 폴더로 옮길 수 없어요`,'bad'); }
+      else toast(`${res.count}개 폴더 복사했어요 📋`);
+    }
+    refreshWordsTab();
+  }
+});
+
+function renderWords(root){
+  const allWords = DB.words();
+  const folders = DB.folders();
+
+  // 삭제된 폴더 참조 정리
+  const folderIds = new Set(folders.map(f=>f.id));
+  [...treeSel].forEach(id=>{ if(!folderIds.has(id)) treeSel.delete(id); });
+  [...treeExpanded].forEach(id=>{ if(!folderIds.has(id)) treeExpanded.delete(id); });
+  if(curFolder && !folderIds.has(curFolder)) curFolder = null;
+  if(folderClipboard) folderClipboard.ids = folderClipboard.ids.filter(id=>folderIds.has(id));
+  if(folderClipboard && !folderClipboard.ids.length) folderClipboard = null;
+
+  const crumbs = folderPath(folders, curFolder);
+  crumbs.forEach(f=> treeExpanded.add(f.id)); // 현재 폴더까지 자동으로 펼치기
+
+  const words = wordsInFolder(allWords, folders, curFolder, false); // 현재 폴더 직속 단어만
+  const emptyCount = words.filter(w=>!w.ko || !w.ko.trim()).length;
+  const treeRows = visibleFolderRows(folders, treeExpanded);
+
+  root.innerHTML = `
+    <div class="mb-3 flex items-center justify-between gap-2">
+      <div class="flex flex-wrap items-center gap-1 text-xs font-bold">
+        <button data-crumb="" class="rounded-lg px-2 py-1 ${curFolder===null?'bg-brand-100 text-brand-600':'text-slate-400 hover:bg-slate-100'}">📚 전체</button>
+        ${crumbs.map(f=>`<span class="text-slate-300">›</span><button data-crumb="${f.id}" class="rounded-lg px-2 py-1 ${f.id===curFolder?'bg-brand-100 text-brand-600':'text-slate-400 hover:bg-slate-100'}">${esc(f.name)}</button>`).join('')}
+      </div>
+      <div class="flex shrink-0 items-center gap-1">
+        <button id="w-export" title="단어장 전체를 파일로 저장" class="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm">⬇ 백업</button>
+        <button id="w-import" title="백업 파일에서 복원" class="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm">⬆ 복원</button>
+        <input type="file" id="w-import-file" accept="application/json" class="hidden" />
+      </div>
+    </div>
+
+    <section class="mb-4">
+      <div class="mb-2 flex items-center justify-between px-1">
+        <h2 class="text-sm font-extrabold text-slate-600">📁 폴더 트리</h2>
+        <button id="f-new" class="text-xs font-bold text-brand-600">+ 새 폴더</button>
+      </div>
+      <p class="mb-2 px-1 text-[11px] text-slate-400">마우스로 드래그해 옮기기 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택 · <b>Ctrl+C/X/V</b> 복사·잘라내기·붙여넣기</p>
+
+      ${treeSel.size? `
+      <div class="mb-2 flex items-center gap-1.5 rounded-2xl bg-brand-500 p-2 pl-4 text-white shadow-soft anim-slide">
+        <span class="flex-1 text-sm font-black">${treeSel.size}개 폴더 선택</span>
+        <button id="tree-cut" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">✂ 잘라내기</button>
+        <button id="tree-copy" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">📋 복사</button>
+        <button id="tree-none" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">해제</button>
+        <button id="tree-del" class="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-coral-600">🗑 삭제</button>
+      </div>`:''}
+      ${folderClipboard? `
+      <div class="mb-2 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700 anim-slide">
+        <span class="flex-1">📎 ${folderClipboard.ids.length}개 폴더 ${folderClipboard.mode==='cut'?'잘라내기':'복사'}됨 — ‘${curFolder? esc(crumbs[crumbs.length-1].name):'전체'}’에 붙여넣을까요?</span>
+        <button id="tree-paste" class="shrink-0 rounded-lg bg-amber-500 px-2.5 py-1 text-white">붙여넣기</button>
+        <button id="tree-paste-cancel" class="shrink-0 rounded-lg bg-white px-2 py-1 text-amber-600">취소</button>
+      </div>`:''}
+
+      ${treeRows.length? `<div class="flex flex-col gap-0.5 rounded-2xl bg-white p-1.5 shadow-sm">${treeRows.map(f=>{
+        const hasKids = folderChildren(folders, f.id).length>0;
+        const isOpen = treeExpanded.has(f.id);
+        const isCur = f.id===curFolder;
+        const isSel = treeSel.has(f.id);
+        const cnt = wordsInFolder(allWords, folders, f.id, true).length;
+        return `
+        <div data-tree-row="${f.id}" draggable="true" style="padding-left:${8+f.depth*18}px"
+          class="flex select-none items-center gap-1.5 rounded-xl py-2 pr-1.5 text-sm transition cursor-pointer ${isSel?'bg-brand-100 ring-1 ring-brand-400':isCur?'bg-brand-50':'hover:bg-slate-50'}">
+          <button draggable="false" data-tree-toggle="${f.id}" class="grid h-6 w-6 shrink-0 place-items-center text-slate-400 ${hasKids?'':'invisible'}">${isOpen?'▾':'▸'}</button>
+          <span class="shrink-0">📁</span>
+          <span class="min-w-0 flex-1 truncate font-bold ${isCur?'text-brand-700':'text-slate-700'}">${esc(f.name)}</span>
+          <span class="shrink-0 text-[11px] text-slate-400">${cnt}개</span>
+          <button draggable="false" data-folder-rename="${f.id}" class="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-brand-50 hover:text-brand-500">✎</button>
+          <button draggable="false" data-folder-del="${f.id}" class="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-coral-50 hover:text-coral-500">✕</button>
+        </div>`;
+      }).join('')}</div>` : `<p class="px-1 text-xs text-slate-300">폴더가 없어요</p>`}
+    </section>
+
+    <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
+      <h2 class="mb-1 text-base font-extrabold">단어 추가</h2>
+      <p class="mb-3 text-xs leading-relaxed text-slate-400">${curFolder? `<b>'${esc(crumbs[crumbs.length-1].name)}'</b> 폴더에 추가돼요. `:''}<b>영단어와 뜻을 한 줄에</b> 적어주세요. 콤마·띄어쓰기 아무거나 OK — 영어·한글을 자동으로 구분해 매칭해요. <b>영어만</b> 쓰면 뜻은 자동으로 채워집니다.</p>
+      <div class="flex flex-col gap-2">
+        <input id="w-entry" placeholder="예: apple 사과   또는   apple, 사과" class="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
+        <button id="w-add" class="btn3d bg-brand-500 py-3.5 text-white" style="--btn-edge:#4338ca">＋ 단어 추가</button>
+      </div>
+      <details class="mt-3">
+        <summary class="cursor-pointer text-xs font-bold text-brand-600">여러 개 한 번에 붙여넣기</summary>
+        <p class="mt-2 text-xs text-slate-400">줄바꿈·콤마·띄어쓰기로 여러 개를 한꺼번에. (예: <b>apple 사과, run 달리다</b>)</p>
+        <textarea id="w-bulk" rows="4" placeholder="apple 사과&#10;run 달리다&#10;happy 행복한&#10;&#10;또는: apple 사과, run 달리다, book 책" class="mt-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-brand-400"></textarea>
+        <button id="w-bulk-add" class="btn3d mt-2 w-full bg-slate-800 py-2.5 text-sm text-white" style="--btn-edge:#0f172a">일괄 추가</button>
+      </details>
+    </section>
+
+    <section class="mt-4">
+      <div class="mb-1 flex items-center justify-between px-1">
+        <h2 class="text-sm font-extrabold text-slate-600">${curFolder?'이 폴더의 단어':'내 단어장'} <span class="text-brand-500">${words.length}</span>개</h2>
+        ${words.length? `<button id="w-clear" class="text-xs font-bold text-coral-500">전체 삭제</button>`:''}
+      </div>
+      ${words.length? `<p class="mb-2 px-1 text-[11px] text-slate-400">번호를 탭하면 선택 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>`:''}
+      ${emptyCount? `<div class="mb-2 rounded-xl bg-coral-50 px-3 py-2 text-[11px] font-semibold text-coral-600">⚠️ 뜻이 비어있는 단어 ${emptyCount}개 — 탭해서 채워주세요 (테스트에서 제외됩니다)</div>`:''}
+
+      ${selWords.size? `
+      <div class="sticky top-2 z-20 mb-2 flex items-center gap-1.5 rounded-2xl bg-brand-500 p-2 pl-4 text-white shadow-soft anim-slide">
+        <span class="flex-1 text-sm font-black">${selWords.size}개 선택</span>
+        <button id="sel-all" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">전체</button>
+        <button id="sel-none" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">해제</button>
+        <button id="sel-move" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">📁 이동</button>
+        <button id="sel-del" class="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-coral-600">🗑 삭제</button>
+      </div>`:''}
+
+      <div class="flex flex-col gap-2">
+        ${words.length? words.map((w,i)=>{
+          const empty = !w.ko || !w.ko.trim();
+          const sel = selWords.has(w.id);
+          return `
+          <div data-row="${w.id}" class="anim-pop flex select-none items-center gap-3 rounded-2xl p-3 pr-2 shadow-sm transition ${sel?'bg-brand-50 ring-2 ring-brand-400':empty?'bg-white ring-1 ring-coral-200':'bg-white'}">
+            <button data-sel="${w.id}" title="선택" class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black transition ${sel?'bg-brand-500 text-white':'bg-brand-50 text-brand-500'}">${sel?'✓':(i+1)}</button>
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-extrabold">${esc(w.en)}</div>
+              <div data-editko="${w.id}" class="cursor-text truncate text-sm ${empty?'font-bold text-coral-400':'text-slate-400'}">${empty?'뜻 없음 · 탭하여 입력':esc(w.ko)}<span class="ml-1 text-slate-300">✎</span></div>
+            </div>
+            <button data-del="${w.id}" class="grid h-9 w-9 place-items-center rounded-xl text-slate-300 hover:bg-coral-50 hover:text-coral-500">✕</button>
+          </div>`;}).join('')
+        : `<div class="rounded-2xl border-2 border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">${curFolder?'이 폴더에 단어가 없어요.':'아직 단어가 없어요.'}<br/>위에서 첫 단어를 추가해 보세요! ✏️</div>`}
+      </div>
+    </section>
+  `;
+
+  const entryEl=$('#w-entry'), addBtn=$('#w-add');
+
+  // 파싱 → 뜻 없는 항목만 자동 번역 → 저장 (현재 폴더에 추가)
+  async function addEntries(raw, btn){
+    const pairs = parsePairs(raw);
+    if(!pairs.length){ toast('인식된 단어가 없어요','bad'); return; }
+    const needTx = pairs.filter(p=>!p.ko).length;
+    btn.disabled=true;
+    const list=DB.words(); let txDone=0, failed=0;
+    for(const p of pairs){
+      let ko=p.ko;
+      if(!ko){ txDone++; btn.textContent=`🔎 뜻 자동 채우는 중… (${txDone}/${needTx})`; ko = await translateWord(p.en) || ''; if(!ko) failed++; }
+      list.push({id:uid(8), en:p.en, ko, folderId:curFolder});
+    }
+    selWords.clear(); selAnchor=null;
+    DB.saveWords(list); renderWords(root);
+    if(failed) toast(`${pairs.length}개 추가 · ${failed}개는 뜻 확인 필요`,'bad');
+    else toast(`${pairs.length}개 추가했어요 ✅`);
+  }
+
+  addBtn.onclick=async()=>{ if(entryEl.value.trim()){ await addEntries(entryEl.value, addBtn); const e=$('#w-entry'); if(e) e.focus(); } };
+  entryEl.addEventListener('keydown',e=>{ if(e.key==='Enter') addBtn.click(); });
+  // 한 줄짜리 입력칸에 여러 줄을 붙여넣으면 브라우저가 줄바꿈을 지워버려 단어 경계가 사라짐
+  // → 붙여넣기 원문(줄바꿈 보존)을 직접 잡아 처리하고, 입력칸에는 아예 넣지 않음
+  entryEl.addEventListener('paste', e=>{
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    if(/[\n\r]/.test(text)){
+      e.preventDefault();
+      addEntries(text, addBtn);
+    }
+  });
+  $('#w-bulk-add').onclick=async()=>{ const raw=$('#w-bulk').value.trim(); if(raw) await addEntries(raw, $('#w-bulk-add')); };
+
+  // ----- 백업(내보내기) / 복원(가져오기) — 브라우저 데이터가 지워져도 대비할 수 있도록 -----
+  $('#w-export').onclick=()=>{
+    const data = { v:1, exportedAt:Date.now(), words:DB.words(), folders:DB.folders() };
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    const a = document.createElement('a');
+    a.href=url; a.download=`vocatest-backup-${stamp}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast('백업 파일을 저장했어요 💾');
+  };
+  const importFile=$('#w-import-file');
+  $('#w-import').onclick=()=> importFile.click();
+  importFile.addEventListener('change', ()=>{
+    const file = importFile.files[0]; importFile.value='';
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      let data; try{ data = JSON.parse(reader.result); }catch(e){ toast('올바른 백업 파일이 아니에요','bad'); return; }
+      if(!data || !Array.isArray(data.words)){ toast('올바른 백업 파일이 아니에요','bad'); return; }
+      const wCount=data.words.length, fCount=Array.isArray(data.folders)?data.folders.length:0;
+      if(!(await askConfirm(`단어 ${wCount}개${fCount?`, 폴더 ${fCount}개`:''}를 지금 단어장에 합칠까요?`,'가져오기'))) return;
+      // 폴더 id 충돌 방지를 위해 전부 새 id로 재매핑
+      const idMap={};
+      const newFolders=(data.folders||[]).map(f=>{ const nid=uid(8); idMap[f.id]=nid; return {...f, id:nid}; });
+      newFolders.forEach(f=>{ f.parentId = f.parentId && idMap[f.parentId] ? idMap[f.parentId] : null; });
+      const newWords=data.words.map(w=>({ id:uid(8), en:w.en||'', ko:w.ko||'', folderId: w.folderId && idMap[w.folderId] ? idMap[w.folderId] : null }));
+      DB.saveFolders(DB.folders().concat(newFolders));
+      DB.saveWords(DB.words().concat(newWords));
+      toast(`${newWords.length}개 단어를 가져왔어요 ✅`); renderWords(root);
+    };
+    reader.readAsText(file);
+  });
+
+  // ----- 폴더 트리: 이동(breadcrumb) / 생성 -----
+  const clearDropRing=(el)=> el.classList.remove('ring-2','ring-brand-400');
+  root.querySelectorAll('[data-crumb]').forEach(b=> b.onclick=()=>{
+    curFolder = b.dataset.crumb || null; selWords.clear(); selAnchor=null;
+    treeSel.clear(); treeAnchor=null; renderWords(root);
+  });
+  // 최상위("전체")도 드래그 드롭 대상 — 폴더를 최상위로 옮기기
+  const rootCrumb = root.querySelector('[data-crumb=""]');
+  rootCrumb.addEventListener('dragover', e=>{ e.preventDefault(); rootCrumb.classList.add('ring-2','ring-brand-400'); });
+  rootCrumb.addEventListener('dragleave', ()=> clearDropRing(rootCrumb));
+  rootCrumb.addEventListener('drop', e=>{
+    e.preventDefault(); clearDropRing(rootCrumb);
+    let ids=[]; try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')||'[]'); }catch(_){}
+    if(!ids.length) return;
+    const { moved, blocked } = reparentFolders(ids, null);
+    if(moved) toast(`${moved}개 폴더를 최상위로 이동했어요 📁`);
+    if(blocked) toast(`${blocked}개는 옮길 수 없어요`,'bad');
+    if(moved) renderWords(root);
+  });
+
+  $('#f-new').onclick=async()=>{
+    const name = await askPrompt('새 폴더 이름을 입력하세요','예: 1과 · Chapter 1');
+    if(!name) return;
+    const list=DB.folders(); list.push({id:uid(8), name, parentId:curFolder}); DB.saveFolders(list);
+    toast('폴더를 만들었어요 📁'); renderWords(root);
+  };
+
+  // ----- 폴더 트리 행: 클릭 선택/이동, 펼치기, 드래그&드롭 -----
+  root.querySelectorAll('[data-tree-row]').forEach(row=>{
+    const id = row.dataset.treeRow;
+    row.addEventListener('click', e=>{
+      if(e.target.closest('[data-tree-toggle],[data-folder-rename],[data-folder-del]')) return;
+      const visIds = treeRows.map(f=>f.id);
+      if(e.shiftKey && treeAnchor!==null){
+        const ai=visIds.indexOf(treeAnchor), bi=visIds.indexOf(id);
+        if(ai!==-1 && bi!==-1){ const [a,b]=[ai,bi].sort((x,y)=>x-y); treeSel.clear(); for(let k=a;k<=b;k++) treeSel.add(visIds[k]); }
+        e.preventDefault(); renderWords(root); return;
+      }
+      if(e.ctrlKey || e.metaKey){
+        if(treeSel.has(id)) treeSel.delete(id); else treeSel.add(id);
+        treeAnchor=id; e.preventDefault(); renderWords(root); return;
+      }
+      // 일반 클릭: 그 폴더로 이동 + 단일 선택
+      curFolder=id; treeSel.clear(); treeSel.add(id); treeAnchor=id;
+      selWords.clear(); selAnchor=null; renderWords(root);
+    });
+    const toggle = row.querySelector('[data-tree-toggle]');
+    if(toggle) toggle.addEventListener('click', e=>{
+      e.stopPropagation();
+      if(treeExpanded.has(id)) treeExpanded.delete(id); else treeExpanded.add(id);
+      renderWords(root);
+    });
+    row.addEventListener('dragstart', e=>{
+      const dragIds = treeSel.has(id) ? [...treeSel] : [id];
+      e.dataTransfer.setData('text/plain', JSON.stringify(dragIds));
+      e.dataTransfer.effectAllowed='move';
+    });
+    row.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; row.classList.add('ring-2','ring-brand-400'); });
+    row.addEventListener('dragleave', ()=> clearDropRing(row));
+    row.addEventListener('drop', e=>{
+      e.preventDefault(); clearDropRing(row);
+      let ids=[]; try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')||'[]'); }catch(_){}
+      if(!ids.length) return;
+      const { moved, blocked } = reparentFolders(ids, id);
+      if(moved) toast(`${moved}개 폴더 이동했어요 📁`);
+      if(blocked) toast(`${blocked}개는 하위 폴더로 옮길 수 없어요`,'bad');
+      if(moved) renderWords(root);
+    });
+  });
+
+  root.querySelectorAll('[data-folder-rename]').forEach(b=> b.onclick=async(e)=>{
+    e.stopPropagation();
+    const fid=b.dataset.folderRename; const f=folders.find(x=>x.id===fid);
+    const name=await askPrompt('폴더 이름을 바꿔주세요','',"저장",f.name);
+    if(!name) return;
+    const list=DB.folders(); const idx=list.findIndex(x=>x.id===fid);
+    if(idx>-1){ list[idx].name=name; DB.saveFolders(list); renderWords(root); }
+  });
+  root.querySelectorAll('[data-folder-del]').forEach(b=> b.onclick=async(e)=>{
+    e.stopPropagation();
+    const fid=b.dataset.folderDel; const f=folders.find(x=>x.id===fid);
+    const delIds = folderDescendantIds(folders, fid);
+    const cnt = allWords.filter(w=>delIds.includes(w.folderId||null)).length;
+    const subCnt = delIds.length-1;
+    const extra = (cnt||subCnt)? `\n안의 단어 ${cnt}개${subCnt?`, 하위폴더 ${subCnt}개`:''}도 함께 삭제돼요.`:'';
+    if(await askConfirm(`'${f.name}' 폴더를 삭제할까요?${extra}`)){
+      DB.saveFolders(DB.folders().filter(x=>!delIds.includes(x.id)));
+      DB.saveWords(DB.words().filter(w=>!delIds.includes(w.folderId||null)));
+      toast('폴더를 삭제했어요'); renderWords(root);
+    }
+  });
+
+  // ----- 폴더 트리 선택 툴바: 잘라내기/복사/삭제/해제, 클립보드 붙여넣기 -----
+  const treeCut=$('#tree-cut'); if(treeCut) treeCut.onclick=()=>{
+    folderClipboard={ids:[...treeSel], mode:'cut'}; toast(`${treeSel.size}개 폴더 잘라내기`); renderWords(root);
+  };
+  const treeCopy=$('#tree-copy'); if(treeCopy) treeCopy.onclick=()=>{
+    folderClipboard={ids:[...treeSel], mode:'copy'}; toast(`${treeSel.size}개 폴더 복사`); renderWords(root);
+  };
+  const treeNone=$('#tree-none'); if(treeNone) treeNone.onclick=()=>{ treeSel.clear(); treeAnchor=null; renderWords(root); };
+  const treeDel=$('#tree-del'); if(treeDel) treeDel.onclick=async()=>{
+    const ids=[...treeSel];
+    const delIds=new Set(); ids.forEach(id=> folderDescendantIds(folders,id).forEach(x=>delIds.add(x)));
+    const wc = allWords.filter(w=>delIds.has(w.folderId||null)).length;
+    if(await askConfirm(`선택한 폴더 ${ids.length}개를 삭제할까요?\n안의 단어 ${wc}개도 함께 삭제돼요.`)){
+      DB.saveFolders(DB.folders().filter(f=>!delIds.has(f.id)));
+      DB.saveWords(DB.words().filter(w=>!delIds.has(w.folderId||null)));
+      treeSel.clear(); toast('삭제했어요'); renderWords(root);
+    }
+  };
+  const treePaste=$('#tree-paste'); if(treePaste) treePaste.onclick=()=>{
+    const res = pasteFolderClipboard(folderClipboard, curFolder);
+    folderClipboard=null;
+    if(res){
+      if(res.mode==='cut'){ if(res.moved) toast(`${res.moved}개 폴더 이동했어요 📁`); if(res.blocked) toast(`${res.blocked}개는 하위 폴더로 옮길 수 없어요`,'bad'); }
+      else toast(`${res.count}개 폴더 복사했어요 📋`);
+    }
+    renderWords(root);
+  };
+  const treePasteCancel=$('#tree-paste-cancel'); if(treePasteCancel) treePasteCancel.onclick=()=>{ folderClipboard=null; renderWords(root); };
+
+  // ----- 다중 선택 (Ctrl 개별 / Shift 연속 / 번호탭) -----
+  const toggle=(id)=>{ if(selWords.has(id)) selWords.delete(id); else selWords.add(id); selAnchor=id; };
+  root.querySelectorAll('[data-row]').forEach(row=> row.addEventListener('click', e=>{
+    const id=row.dataset.row;
+    if(e.target.closest('[data-del]')) return;                 // 개별 삭제 버튼은 별도 처리
+    if(e.shiftKey && selAnchor!==null){                        // 연속 선택
+      const ids = words.map(w=>w.id);
+      const ai=ids.indexOf(selAnchor), bi=ids.indexOf(id);
+      if(ai!==-1 && bi!==-1){ const [a,b]=[ai,bi].sort((x,y)=>x-y); for(let k=a;k<=b;k++) selWords.add(ids[k]); }
+      e.preventDefault(); renderWords(root); return;
+    }
+    if(e.ctrlKey || e.metaKey || e.target.closest('[data-sel]')){  // 개별 선택(Ctrl) 또는 번호 탭
+      toggle(id); e.preventDefault(); renderWords(root); return;
+    }
+    // 그 외 일반 클릭은 뜻 수정 등 기존 동작에 맡김
+  }));
+
+  // 선택 툴바
+  const selAll=$('#sel-all'); if(selAll) selAll.onclick=()=>{ words.forEach(w=>selWords.add(w.id)); renderWords(root); };
+  const selNone=$('#sel-none'); if(selNone) selNone.onclick=()=>{ selWords.clear(); selAnchor=null; renderWords(root); };
+  const selMove=$('#sel-move'); if(selMove) selMove.onclick=async()=>{
+    const target = await pickFolderModal(DB.folders(), `${selWords.size}개 단어를 이동할 폴더 선택`);
+    if(target===undefined) return;
+    const list=DB.words(); list.forEach(w=>{ if(selWords.has(w.id)) w.folderId=target; });
+    const n=selWords.size; selWords.clear(); selAnchor=null; DB.saveWords(list); renderWords(root); toast(`${n}개 이동했어요 📁`);
+  };
+  const selDel=$('#sel-del'); if(selDel) selDel.onclick=async()=>{
+    const n=selWords.size;
+    if(await askConfirm(`선택한 ${n}개 단어를 삭제할까요?`)){
+      const list=DB.words().filter(w=>!selWords.has(w.id));
+      selWords.clear(); selAnchor=null; DB.saveWords(list); renderWords(root); toast(`${n}개 삭제했어요`);
+    }
+  };
+
+  // 뜻 인라인 수정 (수식어 키 없을 때만)
+  root.querySelectorAll('[data-editko]').forEach(el=> el.onclick=(e)=>{
+    if(e.ctrlKey||e.metaKey||e.shiftKey) return;
+    const id=el.dataset.editko; const list=DB.words(); const w=list.find(x=>x.id===id);
+    const cur = document.createElement('input');
+    cur.value = w.ko||''; cur.placeholder='뜻 입력';
+    cur.className='w-full rounded-lg border-2 border-brand-400 bg-white px-2 py-1 text-sm font-bold outline-none';
+    el.replaceWith(cur); cur.focus();
+    const save=()=>{ const l=DB.words(); const t=l.find(x=>x.id===id); if(t) t.ko=cur.value.trim(); DB.saveWords(l); renderWords(root); };
+    cur.addEventListener('keydown',ev=>{ if(ev.key==='Enter') save(); });
+    cur.addEventListener('blur', save);
+  });
+
+  // 개별 삭제
+  root.querySelectorAll('[data-del]').forEach(b=> b.onclick=(e)=>{
+    e.stopPropagation();
+    const id=b.dataset.del; const list=DB.words().filter(w=>w.id!==id);
+    selWords.clear(); selAnchor=null; DB.saveWords(list); renderWords(root);
+  });
+
+  // 전체 삭제 (앱 내부 확인창) — 현재 폴더에 보이는 단어만 삭제
+  const clr=$('#w-clear'); if(clr) clr.onclick=async()=>{
+    if(await askConfirm(`${curFolder?'이 폴더의':'전체'} 단어 ${words.length}개를 모두 삭제할까요?`)){
+      const ids=new Set(words.map(w=>w.id));
+      DB.saveWords(DB.words().filter(w=>!ids.has(w.id)));
+      selWords.clear(); selAnchor=null; renderWords(root); toast('삭제했어요');
+    }
+  };
+}
+
+/* ---------- 탭: 테스트 만들기 ---------- */
+let makeCfg = { mode:'mixed', studySec:4, expDays:7, folderId:null };
+const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
+
+function renderMake(root){
+  const folders = DB.folders();
+  if(makeCfg.folderId && !folders.find(f=>f.id===makeCfg.folderId)) makeCfg.folderId = null; // 선택된 폴더가 삭제된 경우 전체로 복귀
+  const scoped = wordsInFolder(DB.words(), folders, makeCfg.folderId, true);
+  const validWords = scoped.filter(w=>w.ko && w.ko.trim());
+  const excluded = scoped.length - validWords.length;
+  const enough = validWords.length>=4;
+  const folderLabel = makeCfg.folderId ? (folders.find(f=>f.id===makeCfg.folderId)?.name || '전체 단어장') : '전체 단어장';
+  root.innerHTML = `
+    <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
+      <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
+      <p class="mb-4 text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${validWords.length}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}</p>
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">📁 출제 범위</label>
+      <button id="t-folder" class="mb-4 flex w-full items-center justify-between rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-left font-bold outline-none focus:border-brand-400">
+        <span class="truncate">${esc(folderLabel)}</span><span class="shrink-0 text-xs text-slate-400">변경 ›</span>
+      </button>
+
+      <label class="mb-1 block text-xs font-bold text-slate-500">학생 이름표 (선택)</label>
+      <input id="t-name" placeholder="예: 3월 데일리 테스트" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">문제 유형</label>
+      <div class="mb-4 grid grid-cols-3 gap-2" id="t-mode">
+        ${modeCard('mc','객관식','4지선다')}
+        ${modeCard('spelling','주관식','스펠링')}
+        ${modeCard('mixed','혼합','랜덤')}
+      </div>
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">🔒 링크 만료일 <span class="font-normal text-slate-400">(지나면 자동 차단)</span></label>
+      <div class="mb-4 grid grid-cols-5 gap-1.5" id="t-exp">
+        ${EXP_OPTIONS.map(o=>{
+          const on=makeCfg.expDays===o.d;
+          return `<button data-exp="${o.d}" class="rounded-xl border-2 py-2.5 text-xs font-extrabold transition ${on?'border-brand-500 bg-brand-50 text-brand-700':'border-slate-100 bg-white text-slate-400'}">${o.t}</button>`;
+        }).join('')}
+      </div>
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">틀렸을 때 공부 시간: <span id="t-secval" class="text-brand-600">${makeCfg.studySec}초</span></label>
+      <input id="t-sec" type="range" min="2" max="10" value="${makeCfg.studySec}" class="mb-5 w-full accent-brand-500" />
+
+      ${!enough && makeCfg.mode!=='spelling' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링은 가능)</div>`:''}
+
+      <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">🔗 테스트 링크 만들기</button>
+    </section>
+
+    <div id="t-result"></div>
+  `;
+
+  root.querySelectorAll('[data-mode]').forEach(c=> c.onclick=()=>{ makeCfg.mode=c.dataset.mode; renderMake(root); });
+  root.querySelectorAll('[data-exp]').forEach(b=> b.onclick=()=>{ makeCfg.expDays=+b.dataset.exp; renderMake(root); });
+  const sec=$('#t-sec'); sec.oninput=()=>{ makeCfg.studySec=+sec.value; $('#t-secval').textContent=sec.value+'초'; };
+  $('#t-folder').onclick=async()=>{
+    const picked = await pickFolderModal(DB.folders(), '어느 폴더에서 출제할까요?');
+    if(picked===undefined) return;
+    makeCfg.folderId = picked; renderMake(root);
+  };
+
+  $('#t-make').onclick=()=>{
+    const valid = wordsInFolder(DB.words(), DB.folders(), makeCfg.folderId, true).filter(w=>w.ko && w.ko.trim());
+    if(valid.length<1){ toast('뜻이 있는 단어를 먼저 추가하세요','bad'); return; }
+    if(makeCfg.mode!=='spelling' && valid.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
+
+    const key = uid(12);
+    const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
+    const dc = deliveryCfg();
+    const dm = dc.mode==='none' ? '' : dc.mode;                 // 'hook' 또는 ''
+    const dv = dm==='hook' ? (dc.url||'') : '';
+    const dt = dm==='hook' ? (dc.token||'') : '';
+    if(dm==='hook' && !dv){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), mode:makeCfg.mode, sec:makeCfg.studySec,
+                      exp, dm, dv, dt, w: valid.map(w=>({e:w.en,k:w.ko})) };
+    const link = buildLink(payload);
+
+    const sessions=DB.sessions();
+    sessions.unshift({ key, name:payload.n, mode:makeCfg.mode, sec:makeCfg.studySec, count:valid.length,
+                       created:Date.now(), exp, dm, dv, dt, status:'active',
+                       snapshot: valid.map(w=>({e:w.en,k:w.ko})) });
+    DB.saveSessions(sessions);
+
+    const expText = exp ? `${new Date(exp).getFullYear()}. ${new Date(exp).getMonth()+1}. ${new Date(exp).getDate()}` : '무제한';
+    const dText = dm==='hook' ? '📊 결과 → 구글시트 자동전송' : '📋 결과 수동 전송';
+    $('#t-result').innerHTML = `
+      <section class="anim-in mt-4 rounded-3xl bg-brand-50 p-5 shadow-card ring-1 ring-brand-100">
+        <div class="mb-2 flex items-center gap-2 text-brand-700"><span class="text-lg">✅</span><b>링크가 만들어졌어요!</b></div>
+        <div class="mb-2 flex flex-wrap gap-1.5">
+          <span class="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-brand-600 shadow-sm">🔒 만료: ${expText}</span>
+          <span class="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1 text-[11px] font-bold text-grass-600 shadow-sm">${dText}</span>
+        </div>
+        <div class="mb-3 break-all rounded-xl bg-white px-4 py-3 text-xs text-slate-500 shadow-sm">${esc(link)}</div>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="t-copy" class="btn3d bg-brand-500 py-3 text-sm text-white" style="--btn-edge:#4338ca">링크 복사</button>
+          <a href="${esc(link)}" target="_blank" class="btn3d grid place-items-center bg-slate-800 py-3 text-sm text-white" style="--btn-edge:#0f172a">미리보기</a>
+        </div>
+        <p class="mt-3 text-[11px] leading-relaxed text-slate-400">만료일이 지나면 어느 기기에서든 자동 차단돼요. <b>세션 관리</b> 탭에서 미리 만료시킬 수도 있어요.</p>
+      </section>`;
+    $('#t-copy').onclick=async()=>{ (await copyText(link))? toast('링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+    $('#t-result').scrollIntoView({behavior:'smooth',block:'center'});
+    toast('세션 발급 완료 🔑');
+  };
+
+  function modeCard(id,title,sub){
+    const on=makeCfg.mode===id;
+    return `<button data-mode="${id}" class="rounded-2xl border-2 py-3 text-center transition ${on?'border-brand-500 bg-brand-50 text-brand-700':'border-slate-100 bg-white text-slate-400'}">
+      <div class="text-sm font-extrabold">${title}</div><div class="text-[11px]">${sub}</div></button>`;
+  }
+}
+
+/* ---------- 탭: 세션 관리 ---------- */
+function renderSessions(root){
+  const sessions = DB.sessions();
+  root.innerHTML = `
+    <section class="anim-slide">
+      <div class="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-[11px] leading-relaxed text-amber-700 ring-1 ring-amber-100">
+        💡 링크는 <b>만료일이 지나면 어느 기기에서든 자동 차단</b>돼요. <b>‘만료시키기’</b>를 누르면 이 브라우저에서 즉시 차단됩니다.
+      </div>
+      <div class="flex flex-col gap-2.5">
+        ${sessions.length? sessions.map(s=>sessionCard(s)).join('')
+        : `<div class="rounded-2xl border-2 border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">아직 만든 테스트가 없어요.<br/>‘테스트 만들기’에서 링크를 발급해 보세요 🎯</div>`}
+      </div>
+      ${sessions.length? `<button id="s-clear" class="mt-4 w-full rounded-xl py-2 text-xs font-bold text-slate-300">만료된 세션 정리</button>`:''}
+    </section>`;
+
+  root.querySelectorAll('[data-copy]').forEach(b=> b.onclick=async()=>{
+    const s=DB.sessions().find(x=>x.key===b.dataset.copy);
+    const link = rebuildLink(s);
+    (await copyText(link))? toast('링크 복사 📋'):toast('복사 실패','bad');
+  });
+  root.querySelectorAll('[data-expire]').forEach(b=> b.onclick=()=>{
+    const list=DB.sessions(); const s=list.find(x=>x.key===b.dataset.expire);
+    if(s){ s.status = s.status==='active'?'expired':'active'; DB.saveSessions(list); renderSessions(root);
+      toast(s.status==='expired'?'세션을 만료했어요 🔒':'세션을 다시 활성화했어요 🔓'); }
+  });
+  root.querySelectorAll('[data-remove]').forEach(b=> b.onclick=()=>{
+    let list=DB.sessions(); list=list.filter(x=>x.key!==b.dataset.remove); DB.saveSessions(list); renderSessions(root);
+  });
+  const clr=$('#s-clear'); if(clr) clr.onclick=()=>{ DB.saveSessions(DB.sessions().filter(s=>s.status==='active')); renderSessions(root); };
+
+  function sessionCard(s){
+    const manualExpired = s.status==='expired';
+    const timeExpired = s.exp && Date.now() > s.exp;
+    const on = !manualExpired && !timeExpired;
+    const modeTxt = {mc:'객관식',spelling:'주관식',mixed:'혼합'}[s.mode]||s.mode;
+    const d = new Date(s.created);
+    const date = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+
+    let badge, expLine;
+    if(manualExpired){ badge=`<span class="shrink-0 rounded-full bg-coral-50 px-2 py-0.5 text-[10px] font-black text-coral-500">만료됨</span>`; }
+    else if(timeExpired){ badge=`<span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-400">기간만료</span>`; }
+    else { badge=`<span class="shrink-0 rounded-full bg-grass-50 px-2 py-0.5 text-[10px] font-black text-grass-600">활성</span>`; }
+
+    if(!s.exp){ expLine='만료 무제한'; }
+    else {
+      const ed=new Date(s.exp);
+      const dday = Math.ceil((s.exp - Date.now())/86400000);
+      expLine = timeExpired ? `만료됨 (${ed.getMonth()+1}/${ed.getDate()})`
+              : `~${ed.getMonth()+1}/${ed.getDate()} 까지 · D-${dday}`;
+    }
+
+    return `<div class="rounded-2xl bg-white p-4 shadow-sm ${on?'':'opacity-70'}">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="truncate font-extrabold">${esc(s.name||'이름 없는 테스트')}</span>
+            ${badge}
+          </div>
+          <div class="mt-0.5 text-xs text-slate-400">${modeTxt} · ${s.count}단어 · ${date}</div>
+          <div class="mt-0.5 text-[11px] font-bold ${timeExpired?'text-slate-400':'text-brand-500'}">🔒 ${expLine}</div>
+        </div>
+      </div>
+      <div class="mt-3 grid grid-cols-3 gap-1.5">
+        <button data-copy="${s.key}" class="rounded-lg bg-slate-100 py-2 text-xs font-bold text-slate-600">링크</button>
+        <button data-expire="${s.key}" class="rounded-lg py-2 text-xs font-bold ${s.status==='active'?'bg-coral-50 text-coral-600':'bg-grass-50 text-grass-600'}">${s.status==='active'?'지금 만료':'재활성화'}</button>
+        <button data-remove="${s.key}" class="rounded-lg bg-slate-100 py-2 text-xs font-bold text-slate-400">삭제</button>
+      </div>
+    </div>`;
+  }
+}
+// 세션 카드에서 링크 재생성 (생성 당시 단어 스냅샷 + 만료일 유지)
+function rebuildLink(s){
+  const snap = s.snapshot || DB.words().map(w=>({e:w.en,k:w.ko}));
+  const payload = { v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', w: snap };
+  return buildLink(payload);
+}
+
+/* ---------- 탭: 결과 (구글시트 설정) ---------- */
+function renderResultsTab(root){
+  const dc = deliveryCfg();
+  const useHook = dc.mode==='hook';
+  const guideCode =
+`function doPost(e){
+  var d = JSON.parse(e.postData.contents);
+  if(d.token !== '${dc.token}'){                    // 비밀 토큰 확인
+    return ContentService.createTextOutput('no');
+  }
+  var s = SpreadsheetApp.getActiveSheet();
+  s.appendRow([new Date(), d.name, d.score, d.timeStr, (d.wrong||[]).join(', ')]);
+  return ContentService.createTextOutput('ok');
+}`;
+
+  root.innerHTML = `
+    <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
+      <h2 class="mb-1 text-base font-extrabold">결과 받기 · 구글시트</h2>
+      <p class="mb-3 text-xs leading-relaxed text-slate-400">학생이 완주하면 결과가 선생님의 <b>구글시트에 자동 기록</b>돼요. 비밀 토큰이 맞을 때만 저장되어 스팸을 막습니다.</p>
+
+      <label class="mb-1.5 flex items-center gap-2 text-xs font-bold text-slate-500">
+        <input id="d-on" type="checkbox" ${useHook?'checked':''} class="h-4 w-4 accent-brand-500" />
+        구글시트로 결과 자동 전송 사용
+      </label>
+
+      <div id="d-detail" class="${useHook?'':'pointer-events-none opacity-40'}">
+        <label class="mb-1 mt-3 block text-xs font-bold text-slate-500">① 웹훅 URL <span class="font-normal text-slate-400">(Apps Script 배포 주소)</span></label>
+        <input id="d-url" value="${esc(dc.url||'')}" placeholder="https://script.google.com/macros/s/.../exec" class="mb-3 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-brand-400" />
+
+        <label class="mb-1 block text-xs font-bold text-slate-500">② 비밀 토큰 <span class="font-normal text-slate-400">(아래 코드와 동일해야 함)</span></label>
+        <div class="mb-3 flex gap-2">
+          <input id="d-token" value="${esc(dc.token)}" class="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-mono text-xs outline-none focus:border-brand-400" />
+          <button id="d-newtoken" class="btn3d shrink-0 bg-slate-200 px-3 text-xs font-bold text-slate-600" style="--btn-edge:#cbd5e1">새로</button>
+        </div>
+
+        <button id="d-save" class="btn3d w-full bg-brand-500 py-3 text-sm text-white" style="--btn-edge:#4338ca">저장</button>
+
+        <div class="mt-4 rounded-2xl bg-slate-50 p-4">
+          <p class="mb-2 text-xs font-bold text-slate-600">③ 구글시트 연결 방법</p>
+          <ol class="list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-500">
+            <li>구글시트 새로 만들기 → 상단 <b>확장 프로그램 → Apps Script</b></li>
+            <li>아래 코드를 통째로 붙여넣기 (토큰이 이미 들어가 있어요)</li>
+            <li><b>배포 → 새 배포 → 유형 ‘웹 앱’ → 액세스 ‘모든 사용자’ → 배포</b></li>
+            <li>나오는 <b>/exec</b> 주소를 위 ① 칸에 붙여넣고 저장</li>
+          </ol>
+          <div class="mt-2 flex items-center justify-between">
+            <span class="text-[11px] font-bold text-slate-500">Apps Script 코드</span>
+            <button id="d-copycode" class="rounded-lg bg-brand-500 px-3 py-1 text-[11px] font-bold text-white">코드 복사</button>
+          </div>
+          <pre class="mt-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[10px] leading-relaxed text-slate-100 no-scrollbar">${esc(guideCode)}</pre>
+        </div>
+
+        <div class="mt-3 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">
+          🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 웹훅 주소는 <b>쓰기 전용</b>이라 시트를 읽거나 계정에 접근할 수 없습니다. 토큰이 링크 변조도 막아줘요.
+        </div>
+      </div>
+    </section>
+  `;
+
+  $('#d-on').onchange=(e)=>{ const c=deliveryCfg(); c.mode = e.target.checked ? 'hook':'none'; saveDelivery(c); renderResultsTab(root); };
+
+  if(useHook){
+    $('#d-url').oninput   =()=>{ const c=deliveryCfg(); c.url=$('#d-url').value.trim(); saveDelivery(c); };
+    $('#d-token').oninput =()=>{ const c=deliveryCfg(); c.token=$('#d-token').value.trim(); saveDelivery(c); };
+    $('#d-newtoken').onclick=()=>{ const c=deliveryCfg(); c.token=newToken(); saveDelivery(c); renderResultsTab(root); };
+    $('#d-save').onclick=()=>{ const c=deliveryCfg(); c.url=$('#d-url').value.trim(); c.token=$('#d-token').value.trim()||newToken(); saveDelivery(c); toast('저장했어요 ✅'); renderResultsTab(root); };
+    $('#d-copycode').onclick=async()=>{ (await copyText(guideCode))? toast('코드를 복사했어요 📋'):toast('복사 실패','bad'); };
+  }
+}
+
+/* ============================================================
+   학생 앱
+   ============================================================ */
+function StudentApp(sessionKey, dataStr){
+  // 1) 데이터 복원
+  const payload = dataStr ? b64dec(dataStr) : null;
+  if(!payload || !payload.w || !payload.w.length){
+    return renderExpired('테스트 정보를 불러올 수 없어요. 링크가 올바른지 확인해 주세요.');
+  }
+
+  // 2) 위·변조 검증 (만료일/단어를 임의로 바꾼 링크 차단)
+  if(!verifyPayload(payload)){
+    return renderExpired('유효하지 않은 링크예요. 링크가 손상되었거나 변경되었을 수 있어요.');
+  }
+
+  // 3) 만료 확인 — 링크 만료일이 지났거나(모든 기기), 이 브라우저에서 선생님이 만료함
+  if(payload.exp && Date.now() > payload.exp){
+    const ed = new Date(payload.exp);
+    return renderExpired(`이 테스트는 ${ed.getFullYear()}년 ${ed.getMonth()+1}월 ${ed.getDate()}일에 만료되었어요.`);
+  }
+  const rec = DB.sessions().find(s=>s.key===sessionKey);
+  if(rec && rec.status==='expired'){ return renderExpired('이 테스트는 선생님이 마감했어요.'); }
+
+  const words = payload.w.map(x=>({en:x.e, ko:x.k}));
+  const cfg = { mode: payload.mode||'mixed', sec: payload.sec||4, name: payload.n||'', dm: payload.dm||'', dv: payload.dv||'', dt: payload.dt||'' };
+
+  renderGate();
+
+  /* ----- 이름 입력 ----- */
+  function renderGate(){
+    app.innerHTML = `
+      <div class="flex min-h-[70dvh] flex-col items-center justify-center text-center anim-in">
+        <div class="mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-brand-500 text-4xl shadow-soft floaty">📚</div>
+        <p class="text-xs font-black tracking-widest text-brand-400">VOCATEST</p>
+        <h1 class="text-2xl font-extrabold">영단어 테스트</h1>
+        ${cfg.name? `<p class="mt-1 font-semibold text-brand-500">${esc(cfg.name)}</p>`:''}
+        <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식',mixed:'혼합'})[cfg.mode]}</p>
+        <div class="mt-7 w-full max-w-xs">
+          <input id="s-name" placeholder="이름을 입력하세요" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-lg font-bold shadow-sm outline-none focus:border-brand-400" />
+          <button id="s-start" class="btn3d mt-3 w-full bg-grass-500 py-4 text-lg text-white" style="--btn-edge:#15803d">시작하기 🚀</button>
+        </div>
+        <p class="mt-6 max-w-xs text-[11px] leading-relaxed text-slate-400">틀린 단어는 <b>맞출 때까지 반복</b>돼요.<br/>끝까지 완주하면 결과 카드가 나와요!</p>
+      </div>`;
+    const nameEl=$('#s-name'); nameEl.focus();
+    function start(){
+      const name=nameEl.value.trim();
+      if(!name){ toast('이름을 입력해 주세요','bad'); nameEl.focus(); return; }
+      startQuiz(name);
+    }
+    $('#s-start').onclick=start;
+    nameEl.addEventListener('keydown',e=>{ if(e.key==='Enter') start(); });
+  }
+
+  /* ----- 퀴즈 엔진 ----- */
+  function startQuiz(studentName){
+    // 각 단어 → 문제 객체 (혼합이면 랜덤 유형)
+    const questions = words.map((w,i)=>{
+      let type = cfg.mode;
+      if(cfg.mode==='mixed') type = Math.random()<0.5 ? 'mc' : 'spelling';
+      return { id:i, en:w.en, ko:w.ko, type };
+    });
+
+    const state = {
+      name: studentName,
+      total: questions.length,
+      queue: shuffle(questions),      // 맞출 때까지 남는 큐
+      firstResult: {},                // id -> 최초 정답 여부
+      wrongSet: new Set(),            // 오답노트 (id)
+      mastered: new Set(),
+      attempts: 0,
+      start: Date.now(),
+    };
+
+    nextQuestion(state);
+  }
+
+  function nextQuestion(state){
+    if(state.queue.length===0){ return renderResult(state); }
+    const q = state.queue[0];
+    renderQuestion(state, q);
+  }
+
+  function renderQuestion(state, q){
+    const progress = Math.round(state.mastered.size / state.total * 100);
+    const remain = state.queue.length;
+
+    let body;
+    if(q.type==='mc'){
+      // 보기: 다른 단어들의 뜻 3개 + 정답
+      const others = words.filter(w=>w.ko!==q.ko);
+      const distract = shuffle(others).slice(0,3).map(w=>w.ko);
+      const options = shuffle([q.ko, ...distract]);
+      body = `
+        <div class="mb-6 text-center">
+          <p class="mb-2 text-sm font-bold text-slate-400">다음 단어의 뜻은?</p>
+          <div class="rounded-3xl bg-white px-6 py-8 text-3xl font-black shadow-card">${esc(q.en)}</div>
+        </div>
+        <div class="grid gap-2.5" id="opts">
+          ${options.map((o,i)=>`<button data-opt="${esc(o)}" class="btn3d bg-white py-4 text-left px-5 text-base font-bold text-slate-700" style="--btn-edge:#e2e8f0">
+            <span class="mr-2 text-brand-400">${String.fromCharCode(65+i)}.</span>${esc(o)}</button>`).join('')}
+        </div>`;
+    } else {
+      body = `
+        <div class="mb-6 text-center">
+          <p class="mb-2 text-sm font-bold text-slate-400">뜻에 맞는 영단어를 입력하세요</p>
+          <div class="rounded-3xl bg-white px-6 py-8 text-2xl font-black shadow-card">${esc(q.ko)}</div>
+        </div>
+        <input id="sp-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+          placeholder="영어 스펠링 입력" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-xl font-bold shadow-sm outline-none focus:border-brand-400" />
+        <button id="sp-submit" class="btn3d mt-3 w-full bg-brand-500 py-4 text-white" style="--btn-edge:#4338ca">제출하기</button>`;
+    }
+
+    app.innerHTML = `
+      <div class="anim-slide">
+        <header class="mb-4 flex items-center gap-3">
+          <div class="text-sm font-black text-slate-500">${esc(state.name)}</div>
+          <div class="progressbar h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100"><i style="width:${progress}%"></i></div>
+          <div class="text-xs font-black text-brand-500">${state.mastered.size}/${state.total}</div>
+        </header>
+        ${remain>1 ? `<div class="mb-3 text-center text-[11px] font-bold text-slate-300">남은 문제 ${remain}개 · 틀리면 다시 나와요</div>`:''}
+        ${body}
+      </div>`;
+
+    if(q.type==='mc'){
+      app.querySelectorAll('[data-opt]').forEach(b=> b.onclick=()=> answer(state,q, b.dataset.opt===q.ko, b));
+    } else {
+      const inp=$('#sp-input'); inp.focus();
+      const submit=()=>{
+        const val=inp.value.trim();
+        if(!val){ toast('스펠링을 입력하세요','bad'); return; }
+        const ok = val.toLowerCase() === q.en.trim().toLowerCase();
+        answer(state,q,ok,null);
+      };
+      $('#sp-submit').onclick=submit;
+      inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
+    }
+  }
+
+  function answer(state, q, correct, btnEl){
+    state.attempts++;
+    // 최초 시도 결과 기록
+    if(!(q.id in state.firstResult)) state.firstResult[q.id] = correct;
+
+    if(correct){
+      beep(true);
+      // 큐에서 제거 + 마스터
+      state.queue.shift();
+      state.mastered.add(q.id);
+      showFeedback(true, q, ()=> nextQuestion(state), btnEl);
+    } else {
+      beep(false);
+      state.wrongSet.add(q.id);
+      // 틀리면 큐 뒤로 보내 다시 출제
+      const item = state.queue.shift();
+      state.queue.push(item);
+      showFeedback(false, q, ()=> nextQuestion(state), btnEl);
+    }
+  }
+
+  function showFeedback(correct, q, done, btnEl){
+    if(correct){
+      // 초록 피드백 + 즉시 다음
+      if(btnEl){ btnEl.style.setProperty('--btn-edge','#15803d'); btnEl.classList.remove('bg-white','text-slate-700'); btnEl.classList.add('bg-grass-500','text-white','anim-pop'); }
+      const bar=document.createElement('div');
+      bar.className='fixed inset-x-0 bottom-0 z-40 anim-slide';
+      bar.innerHTML=`<div class="mx-auto max-w-md p-4"><div class="flex items-center gap-3 rounded-2xl bg-grass-500 px-5 py-4 text-white shadow-card">
+        <span class="text-2xl">🎉</span><b class="text-lg">정답이에요!</b></div></div>`;
+      document.body.appendChild(bar);
+      setTimeout(()=>{ bar.remove(); done(); }, 650);
+    } else {
+      // 빨강 + 정답 공개 + 공부 타이머
+      const container=document.querySelector('#app > div') || app;
+      container.classList.add('anim-shake');
+      const sec=cfg.sec;
+      const panel=document.createElement('div');
+      panel.className='fixed inset-x-0 bottom-0 z-40 anim-slide';
+      panel.innerHTML=`
+        <div class="mx-auto max-w-md p-4">
+          <div class="rounded-3xl bg-coral-50 p-5 shadow-card ring-1 ring-coral-100">
+            <div class="mb-2 flex items-center gap-2 text-coral-600"><span class="text-xl">❌</span><b>아쉬워요! 정답을 외워봐요</b></div>
+            <div class="rounded-2xl bg-white px-5 py-4 text-center shadow-sm">
+              <span class="text-2xl font-black text-slate-800">${esc(q.en)}</span>
+              <span class="mx-2 text-slate-300">=</span>
+              <span class="text-xl font-bold text-brand-600">${esc(q.ko)}</span>
+            </div>
+            <div class="mt-3 progressbar h-2 overflow-hidden rounded-full bg-white"><i id="study-bar" style="width:0%;background:#fb7185"></i></div>
+            <button id="fb-next" class="btn3d mt-3 w-full bg-slate-300 py-3.5 text-white" style="--btn-edge:#cbd5e1" disabled>
+              <span id="fb-label">${sec}초 후 계속…</span>
+            </button>
+          </div>
+        </div>`;
+      document.body.appendChild(panel);
+
+      const bar=panel.querySelector('#study-bar');
+      const btn=panel.querySelector('#fb-next');
+      const label=panel.querySelector('#fb-label');
+      const t0=Date.now(); const dur=sec*1000; const lock=Math.min(1200, dur);
+      const timer=setInterval(()=>{
+        const el=Date.now()-t0; const pct=Math.min(100, el/dur*100);
+        bar.style.width=pct+'%';
+        const left=Math.ceil((dur-el)/1000);
+        if(el>=lock){
+          btn.disabled=false; btn.classList.remove('bg-slate-300'); btn.classList.add('bg-brand-500');
+          btn.style.setProperty('--btn-edge','#4338ca');
+          label.textContent = left>0 ? `다음 문제 → (${left})` : '다음 문제 →';
+        }
+        if(el>=dur){ clearInterval(timer); label.textContent='다음 문제 →'; }
+      }, 80);
+
+      const go=()=>{ if(btn.disabled) return; clearInterval(timer); panel.remove(); container.classList.remove('anim-shake'); done(); };
+      btn.onclick=go;
+      // 시간 다 되면 자동 진행하지 않고 버튼 강조(학생이 눌러 넘어가게) — 단, dur+2초 후 자동
+      setTimeout(()=>{ if(document.body.contains(panel) && !btn.disabled) go(); }, dur+2500);
+    }
+  }
+
+  /* ----- 결과 카드 ----- */
+  function renderResult(state){
+    const firstCorrect = Object.values(state.firstResult).filter(Boolean).length;
+    const pct = Math.round(firstCorrect/state.total*100);
+    const ms = Date.now()-state.start;
+    const mm = Math.floor(ms/60000), ss = Math.floor((ms%60000)/1000);
+    const timeStr = mm>0 ? `${mm}분 ${ss}초` : `${ss}초`;
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const wrongWords = [...state.wrongSet].map(id=>words[id].en);
+
+    const grade = pct===100 ? {e:'🏆',t:'완벽해요!',c:'text-amber-500'}
+                : pct>=80  ? {e:'🎉',t:'훌륭해요!',c:'text-grass-600'}
+                : pct>=60  ? {e:'👍',t:'잘했어요!',c:'text-brand-600'}
+                :            {e:'💪',t:'다음엔 더!',c:'text-coral-500'};
+
+    if(pct>=60) confetti();
+
+    const report =
+`📚 영단어 테스트 결과
+👤 이름: ${state.name}
+📅 날짜: ${dateStr}
+✅ 최초 점수: ${firstCorrect}/${state.total} (${pct}%)
+🔁 총 시도: ${state.attempts}문제
+⏱️ 완주 시간: ${timeStr}${wrongWords.length? `\n📝 오답 단어: ${wrongWords.join(', ')}`:'\n✨ 오답 없음!'}
+— VocaTest`;
+
+    const result = { name: state.name, score: `${firstCorrect}/${state.total} (${pct}%)`,
+                     timeStr, attempts: state.attempts, wrong: wrongWords, date: dateStr, report };
+    const autoSend = !!cfg.dm;
+
+    app.innerHTML = `
+      <div class="anim-in flex flex-col items-center">
+        <div id="card" class="w-full overflow-hidden rounded-3xl bg-white p-6 shadow-card">
+          <div class="text-center">
+            <div class="mx-auto mb-2 grid h-20 w-20 place-items-center rounded-full bg-gradient-to-br from-brand-100 to-grass-50 text-5xl">${grade.e}</div>
+            <div class="text-lg font-black ${grade.c}">${grade.t}</div>
+            <div class="mt-1 text-sm font-bold text-slate-400">테스트 완주 🎊</div>
+          </div>
+
+          <div class="my-5 rounded-2xl bg-slate-50 p-5 text-center">
+            <div class="text-xs font-bold text-slate-400">최초 점수</div>
+            <div class="mt-1 text-5xl font-black text-slate-800">${firstCorrect}<span class="text-2xl text-slate-300">/${state.total}</span></div>
+            <div class="mt-1 text-sm font-black ${grade.c}">${pct}점</div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-center">
+            <div class="rounded-2xl bg-brand-50 py-3">
+              <div class="text-[11px] font-bold text-brand-400">완주 시간</div>
+              <div class="text-lg font-black text-brand-600">${timeStr}</div>
+            </div>
+            <div class="rounded-2xl bg-slate-50 py-3">
+              <div class="text-[11px] font-bold text-slate-400">총 시도</div>
+              <div class="text-lg font-black text-slate-600">${state.attempts}문제</div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-sm">
+            <span class="font-bold text-slate-400">${esc(state.name)}</span>
+            <span class="font-mono text-xs text-slate-300">${dateStr}</span>
+          </div>
+
+          ${wrongWords.length? `<div class="mt-3 rounded-2xl bg-coral-50 p-3">
+            <div class="mb-1 text-[11px] font-black text-coral-500">📝 오답 단어 (다시 복습!)</div>
+            <div class="text-sm font-bold text-coral-600">${wrongWords.map(esc).join(', ')}</div>
+          </div>`:`<div class="mt-3 rounded-2xl bg-grass-50 p-3 text-center text-sm font-black text-grass-600">✨ 한 번도 안 틀렸어요! 대단해요</div>`}
+        </div>
+
+        <div class="mt-4 grid w-full grid-cols-1 gap-2.5">
+          ${autoSend? `<div id="r-send" class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">📡 선생님께 결과 전송 중…</div>`:''}
+          <button id="r-copy" class="btn3d bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">📋 결과 복사해서 선생님께 보내기</button>
+          <button id="r-again" class="btn3d bg-white py-3.5 text-slate-600" style="--btn-edge:#e2e8f0">다시 풀기 🔄</button>
+        </div>
+        <p class="mt-4 text-center text-[11px] text-slate-400">위 카드를 캡처해서 보내도 좋아요 📸</p>
+      </div>`;
+
+    $('#r-copy').onclick=async()=>{ (await copyText(report))? toast('결과를 복사했어요! 카톡에 붙여넣으세요 💬'):toast('복사 실패','bad'); };
+    $('#r-again').onclick=()=> renderGate();
+
+    if(autoSend){
+      sendResult(cfg.dm, cfg.dv, cfg.dt, result).then(ok=>{
+        const el=$('#r-send'); if(!el) return;
+        if(ok){ el.className='rounded-2xl bg-grass-50 py-3 text-center text-sm font-bold text-grass-600'; el.textContent='✅ 선생님께 결과가 전송됐어요!'; }
+        else  { el.className='rounded-2xl bg-amber-50 py-3 text-center text-sm font-bold text-amber-600'; el.textContent='⚠️ 자동 전송 실패 — 아래 [결과 복사]로 보내주세요'; }
+      });
+    }
+  }
+}
+
+/* ----- 만료/오류 화면 ----- */
+function renderExpired(msg){
+  app.innerHTML = `
+    <div class="flex min-h-[75dvh] flex-col items-center justify-center text-center anim-in">
+      <div class="mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-coral-50 text-4xl">🔒</div>
+      <h1 class="text-xl font-extrabold text-slate-700">만료된 테스트입니다</h1>
+      <p class="mt-2 max-w-xs text-sm text-slate-400">${esc(msg)}</p>
+      <p class="mt-6 text-xs text-slate-300">궁금한 점은 선생님께 문의해 주세요.</p>
+    </div>`;
+}
+
+/* 시작 */
+boot();
+</script>
+</body>
+</html>

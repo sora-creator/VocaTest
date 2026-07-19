@@ -1372,12 +1372,12 @@ function StudentApp(sessionKey, dataStr){
         <div class="mt-7 w-full max-w-xs">
           <input id="s-name" placeholder="이름을 입력하세요" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-lg font-bold shadow-sm outline-none focus:border-brand-400" />
           <div class="mt-4 rounded-2xl bg-white px-4 py-3 shadow-sm">
-            <label class="mb-1.5 block text-[11px] font-bold text-slate-400">⏱ 틀렸을 때 공부 시간: <span id="s-secval" class="text-brand-600">${cfg.sec}초</span></label>
+            <label class="mb-1.5 block text-sm font-bold text-slate-500">⏱ 틀렸을 때 공부 시간: <span id="s-secval" class="text-brand-600">${cfg.sec}초</span></label>
             <input id="s-sec" type="range" min="2" max="10" value="${cfg.sec}" class="w-full accent-brand-500" />
           </div>
           <button id="s-start" class="btn3d mt-3 w-full bg-grass-500 py-4 text-lg text-white" style="--btn-edge:#15803d">시작하기 🚀</button>
         </div>
-        <p class="mt-6 max-w-xs text-[11px] leading-relaxed text-slate-400">틀린 단어는 <b>맞출 때까지 반복</b>돼요.<br/>끝까지 완주하면 결과 카드가 나와요!</p>
+        <p class="mt-6 max-w-xs text-sm leading-relaxed text-slate-500 sm:max-w-sm">틀린 단어는 <b>맞출 때까지 반복</b>돼요.<br/>끝까지 완주하면 결과 카드가 나와요!</p>
       </div>`;
     const nameEl=$('#s-name'); nameEl.focus();
     const secEl=$('#s-sec'); secEl.oninput=()=>{ cfg.sec=+secEl.value; $('#s-secval').textContent=secEl.value+'초'; };
@@ -1527,9 +1527,9 @@ function StudentApp(sessionKey, dataStr){
               <span id="fb-label">${sec}초 후 계속…</span>
             </button>
             <div class="mt-3 flex items-center gap-2">
-              <span class="shrink-0 text-[11px] font-bold text-slate-400">⏱ 공부 시간</span>
+              <span class="shrink-0 text-sm font-bold text-slate-500">⏱ 공부 시간</span>
               <input id="fb-sec" type="range" min="2" max="10" value="${sec}" class="w-full accent-coral-500" />
-              <span id="fb-secval" class="w-8 shrink-0 text-right text-xs font-black text-coral-500">${sec}초</span>
+              <span id="fb-secval" class="w-10 shrink-0 text-right text-sm font-black text-coral-500">${sec}초</span>
             </div>
           </div>
         </div>`;

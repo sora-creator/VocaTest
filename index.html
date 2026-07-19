@@ -574,7 +574,7 @@ function renderWords(root){
         <h2 class="text-sm font-extrabold text-slate-600">📁 폴더 트리</h2>
         <button id="f-new" class="text-xs font-bold text-brand-600">+ 새 폴더</button>
       </div>
-      <p class="mb-2 px-1 text-[11px] text-slate-400">마우스로 드래그해 옮기기 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택 · <b>Ctrl+C/X/V</b> 복사·잘라내기·붙여넣기</p>
+      <p class="mb-2 px-1 text-[11px] text-slate-400">마우스로 드래그해 옮기기 · <b>▲▼</b> 버튼으로 상위/하위 이동 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택 · <b>Ctrl+C/X/V</b> 복사·잘라내기·붙여넣기</p>
 
       ${treeSel.size? `
       <div class="mb-2 flex items-center gap-1.5 rounded-2xl bg-brand-500 p-2 pl-4 text-white shadow-soft anim-slide">
@@ -597,6 +597,10 @@ function renderWords(root){
         const isCur = f.id===curFolder;
         const isSel = treeSel.has(f.id);
         const cnt = wordsInFolder(allWords, folders, f.id, true).length;
+        const siblings = folderChildren(folders, f.parentId);
+        const sibIdx = siblings.findIndex(s=>s.id===f.id);
+        const canOutdent = f.parentId != null;
+        const canIndent = sibIdx>0;
         return `
         <div data-tree-row="${f.id}" draggable="true" style="padding-left:${8+f.depth*18}px"
           class="flex select-none items-center gap-1.5 rounded-xl py-2 pr-1.5 text-sm transition cursor-pointer ${isSel?'bg-brand-100 ring-1 ring-brand-400':isCur?'bg-brand-50':'hover:bg-slate-50'}">
@@ -604,6 +608,10 @@ function renderWords(root){
           <span class="shrink-0">📁</span>
           <span class="min-w-0 flex-1 truncate font-bold ${isCur?'text-brand-700':'text-slate-700'}">${esc(f.name)}</span>
           <span class="shrink-0 text-[11px] text-slate-400">${cnt}개</span>
+          <div class="flex shrink-0 flex-col">
+            <button draggable="false" data-folder-outdent="${f.id}" title="상위로 이동" ${canOutdent?'':'disabled'} class="grid h-3.5 w-6 place-items-center text-[9px] leading-none text-slate-300 hover:text-brand-500 disabled:opacity-20 disabled:hover:text-slate-300">▲</button>
+            <button draggable="false" data-folder-indent="${f.id}" title="하위로 이동" ${canIndent?'':'disabled'} class="grid h-3.5 w-6 place-items-center text-[9px] leading-none text-slate-300 hover:text-brand-500 disabled:opacity-20 disabled:hover:text-slate-300">▼</button>
+          </div>
           <button draggable="false" data-folder-rename="${f.id}" class="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-brand-50 hover:text-brand-500">✎</button>
           <button draggable="false" data-folder-del="${f.id}" class="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-coral-50 hover:text-coral-500">✕</button>
         </div>`;
@@ -760,7 +768,7 @@ function renderWords(root){
   root.querySelectorAll('[data-tree-row]').forEach(row=>{
     const id = row.dataset.treeRow;
     row.addEventListener('click', e=>{
-      if(e.target.closest('[data-tree-toggle],[data-folder-rename],[data-folder-del]')) return;
+      if(e.target.closest('[data-tree-toggle],[data-folder-rename],[data-folder-del],[data-folder-outdent],[data-folder-indent]')) return;
       const visIds = treeRows.map(f=>f.id);
       if(e.shiftKey && treeAnchor!==null){
         const ai=visIds.indexOf(treeAnchor), bi=visIds.indexOf(id);
@@ -799,6 +807,29 @@ function renderWords(root){
     });
   });
 
+  root.querySelectorAll('[data-folder-outdent]').forEach(b=> b.onclick=(e)=>{
+    e.stopPropagation();
+    if(b.disabled) return;
+    const id=b.dataset.folderOutdent;
+    const list=DB.folders(); const f=list.find(x=>x.id===id);
+    if(!f || f.parentId==null) return;
+    const parent=list.find(x=>x.id===f.parentId);
+    f.parentId = parent ? (parent.parentId||null) : null;
+    DB.saveFolders(list); renderWords(root);
+  });
+  root.querySelectorAll('[data-folder-indent]').forEach(b=> b.onclick=(e)=>{
+    e.stopPropagation();
+    if(b.disabled) return;
+    const id=b.dataset.folderIndent;
+    const list=DB.folders(); const f=list.find(x=>x.id===id);
+    if(!f) return;
+    const siblings=folderChildren(list, f.parentId);
+    const idx=siblings.findIndex(s=>s.id===f.id);
+    if(idx<=0) return;
+    f.parentId = siblings[idx-1].id;
+    treeExpanded.add(siblings[idx-1].id); // 새 부모를 펼쳐서 옮긴 폴더가 바로 보이게
+    DB.saveFolders(list); renderWords(root);
+  });
   root.querySelectorAll('[data-folder-rename]').forEach(b=> b.onclick=async(e)=>{
     e.stopPropagation();
     const fid=b.dataset.folderRename; const f=folders.find(x=>x.id===fid);
@@ -915,7 +946,7 @@ function renderWords(root){
 }
 
 /* ---------- 탭: 테스트 만들기 ---------- */
-let makeCfg = { mode:'mixed', studySec:4, expDays:7, folderId:null };
+let makeCfg = { mode:'mixed', studySec:4, expDays:7, folderId:null, sampleMode:'all', sampleCount:'', samplePercent:'' };
 const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
 
 function renderMake(root){
@@ -924,17 +955,49 @@ function renderMake(root){
   const scoped = wordsInFolder(DB.words(), folders, makeCfg.folderId, true);
   const validWords = scoped.filter(w=>w.ko && w.ko.trim());
   const excluded = scoped.length - validWords.length;
-  const enough = validWords.length>=4;
   const folderLabel = makeCfg.folderId ? (folders.find(f=>f.id===makeCfg.folderId)?.name || '전체 단어장') : '전체 단어장';
+
+  // 출제 개수 미리보기 (전체 / 개수 지정 / 퍼센트 지정)
+  function computeSampleN(total){
+    if(makeCfg.sampleMode==='count'){
+      const n=parseInt(makeCfg.sampleCount,10);
+      if(!n || n<1) return null;
+      return Math.min(n, total);
+    }
+    if(makeCfg.sampleMode==='percent'){
+      const p=parseInt(makeCfg.samplePercent,10);
+      if(!p || p<1) return null;
+      return Math.max(1, Math.min(total, Math.round(total*Math.min(p,100)/100)));
+    }
+    return total;
+  }
+  const effectiveN = computeSampleN(validWords.length);
+  const previewCount = effectiveN ?? validWords.length;
+  const enough = previewCount>=4;
+
   root.innerHTML = `
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
-      <p class="mb-4 text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${validWords.length}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}</p>
+      <p class="mb-4 text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">📁 출제 범위</label>
       <button id="t-folder" class="mb-4 flex w-full items-center justify-between rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-left font-bold outline-none focus:border-brand-400">
         <span class="truncate">${esc(folderLabel)}</span><span class="shrink-0 text-xs text-slate-400">변경 ›</span>
       </button>
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">🔢 출제 개수</label>
+      <div class="mb-2 grid grid-cols-3 gap-2" id="t-samplemode">
+        ${sampleModeCard('all','전체', `${validWords.length}개`)}
+        ${sampleModeCard('count','개수 지정','직접 입력')}
+        ${sampleModeCard('percent','퍼센트','직접 입력')}
+      </div>
+      ${makeCfg.sampleMode==='count'? `
+      <input id="t-samplecount" type="number" min="1" max="${validWords.length}" value="${esc(makeCfg.sampleCount)}" placeholder="예: 15" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />`:''}
+      ${makeCfg.sampleMode==='percent'? `
+      <div class="mb-4 flex items-center gap-2">
+        <input id="t-samplepercent" type="number" min="1" max="100" value="${esc(makeCfg.samplePercent)}" placeholder="예: 50" class="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
+        <span class="shrink-0 font-bold text-slate-400">%</span>
+      </div>`:''}
 
       <label class="mb-1 block text-xs font-bold text-slate-500">학생 이름표 (선택)</label>
       <input id="t-name" placeholder="예: 3월 데일리 테스트" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
@@ -973,11 +1036,26 @@ function renderMake(root){
     if(picked===undefined) return;
     makeCfg.folderId = picked; renderMake(root);
   };
+  root.querySelectorAll('[data-samplemode]').forEach(b=> b.onclick=()=>{ makeCfg.sampleMode=b.dataset.samplemode; renderMake(root); });
+  const scEl=$('#t-samplecount'); if(scEl) scEl.addEventListener('change',()=>{ makeCfg.sampleCount=scEl.value; renderMake(root); });
+  const spEl=$('#t-samplepercent'); if(spEl) spEl.addEventListener('change',()=>{ makeCfg.samplePercent=spEl.value; renderMake(root); });
 
   $('#t-make').onclick=()=>{
     const valid = wordsInFolder(DB.words(), DB.folders(), makeCfg.folderId, true).filter(w=>w.ko && w.ko.trim());
     if(valid.length<1){ toast('뜻이 있는 단어를 먼저 추가하세요','bad'); return; }
-    if(makeCfg.mode!=='spelling' && valid.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
+
+    let sampleN = valid.length;
+    if(makeCfg.sampleMode==='count'){
+      const n=parseInt(makeCfg.sampleCount,10);
+      if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); return; }
+      sampleN = Math.min(n, valid.length);
+    } else if(makeCfg.sampleMode==='percent'){
+      const p=parseInt(makeCfg.samplePercent,10);
+      if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); return; }
+      sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
+    }
+    const picked = shuffle(valid).slice(0, sampleN);
+    if(makeCfg.mode!=='spelling' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
@@ -987,13 +1065,13 @@ function renderMake(root){
     const dt = dm==='hook' ? (dc.token||'') : '';
     if(dm==='hook' && !dv){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
     const payload = { v:1, s:key, n:$('#t-name').value.trim(), mode:makeCfg.mode, sec:makeCfg.studySec,
-                      exp, dm, dv, dt, w: valid.map(w=>({e:w.en,k:w.ko})) };
+                      exp, dm, dv, dt, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
 
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, mode:makeCfg.mode, sec:makeCfg.studySec, count:valid.length,
+    sessions.unshift({ key, name:payload.n, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
                        created:Date.now(), exp, dm, dv, dt, status:'active',
-                       snapshot: valid.map(w=>({e:w.en,k:w.ko})) });
+                       snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
 
     const expText = exp ? `${new Date(exp).getFullYear()}. ${new Date(exp).getMonth()+1}. ${new Date(exp).getDate()}` : '무제한';
@@ -1020,6 +1098,11 @@ function renderMake(root){
   function modeCard(id,title,sub){
     const on=makeCfg.mode===id;
     return `<button data-mode="${id}" class="rounded-2xl border-2 py-3 text-center transition ${on?'border-brand-500 bg-brand-50 text-brand-700':'border-slate-100 bg-white text-slate-400'}">
+      <div class="text-sm font-extrabold">${title}</div><div class="text-[11px]">${sub}</div></button>`;
+  }
+  function sampleModeCard(id,title,sub){
+    const on=makeCfg.sampleMode===id;
+    return `<button data-samplemode="${id}" class="rounded-2xl border-2 py-3 text-center transition ${on?'border-brand-500 bg-brand-50 text-brand-700':'border-slate-100 bg-white text-slate-400'}">
       <div class="text-sm font-extrabold">${title}</div><div class="text-[11px]">${sub}</div></button>`;
   }
 }
@@ -1456,21 +1539,29 @@ function StudentApp(sessionKey, dataStr){
         </div>
 
         <div class="mt-4 grid w-full grid-cols-1 gap-2.5">
-          ${autoSend? `<div id="r-send" class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">📡 선생님께 결과 전송 중…</div>`:''}
-          <button id="r-copy" class="btn3d bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">📋 결과 복사해서 선생님께 보내기</button>
-          <button id="r-again" class="btn3d bg-white py-3.5 text-slate-600" style="--btn-edge:#e2e8f0">다시 풀기 🔄</button>
+          ${autoSend? `<div id="r-send" class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">📡 선생님께 결과 전송 중…</div>`
+                     : `<button id="r-copy" class="btn3d bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">📋 결과 복사해서 선생님께 보내기</button>`}
+          <div id="r-copy-fallback"></div>
+          <button id="r-again" class="btn3d py-3.5 ${autoSend?'bg-grass-500 text-white':'bg-white text-slate-600'}" style="--btn-edge:${autoSend?'#15803d':'#e2e8f0'}">재시험 보기 🔄</button>
         </div>
-        <p class="mt-4 text-center text-[11px] text-slate-400">위 카드를 캡처해서 보내도 좋아요 📸</p>
+        ${!autoSend? `<p class="mt-4 text-center text-[11px] text-slate-400">위 카드를 캡처해서 보내도 좋아요 📸</p>`:''}
       </div>`;
 
-    $('#r-copy').onclick=async()=>{ (await copyText(report))? toast('결과를 복사했어요! 카톡에 붙여넣으세요 💬'):toast('복사 실패','bad'); };
+    const rcopy=$('#r-copy'); if(rcopy) rcopy.onclick=async()=>{ (await copyText(report))? toast('결과를 복사했어요! 카톡에 붙여넣으세요 💬'):toast('복사 실패','bad'); };
     $('#r-again').onclick=()=> renderGate();
 
     if(autoSend){
       sendResult(cfg.dm, cfg.dv, cfg.dt, result).then(ok=>{
         const el=$('#r-send'); if(!el) return;
         if(ok){ el.className='rounded-2xl bg-grass-50 py-3 text-center text-sm font-bold text-grass-600'; el.textContent='✅ 선생님께 결과가 전송됐어요!'; }
-        else  { el.className='rounded-2xl bg-amber-50 py-3 text-center text-sm font-bold text-amber-600'; el.textContent='⚠️ 자동 전송 실패 — 아래 [결과 복사]로 보내주세요'; }
+        else {
+          el.className='rounded-2xl bg-amber-50 py-3 text-center text-sm font-bold text-amber-600'; el.textContent='⚠️ 자동 전송에 실패했어요';
+          const fb=$('#r-copy-fallback');
+          if(fb){
+            fb.innerHTML = `<button id="r-copy" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">📋 결과 복사해서 선생님께 보내기</button>`;
+            $('#r-copy').onclick=async()=>{ (await copyText(report))? toast('결과를 복사했어요! 카톡에 붙여넣으세요 💬'):toast('복사 실패','bad'); };
+          }
+        }
       });
     }
   }

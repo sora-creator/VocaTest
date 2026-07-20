@@ -1203,7 +1203,7 @@ function renderMake(root){
       const res = await jsonpFetch(storeUrl);
       shortenBtn.disabled=false; shortenBtn.textContent='🔗 짧은 링크 만들기';
       if(res==='ok'){
-        const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv) + '&rt=' + encodeURIComponent(dt);
+        const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv);
         const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
         $('#t-short-result').innerHTML = `
           <div class="mt-2 flex items-center gap-2 rounded-xl bg-grass-50 px-4 py-3 ring-1 ring-grass-100">
@@ -1271,7 +1271,7 @@ function renderSessions(root){
     const storeUrl = s.dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(s.dt||'') + '&payload=' + encodeURIComponent(JSON.stringify(signed));
     const res = await jsonpFetch(storeUrl);
     if(res==='ok'){
-      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv) + '&rt=' + encodeURIComponent(s.dt||'');
+      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv);
       const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
       toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
     } else {
@@ -1359,14 +1359,13 @@ function doGet(e){                                  // 짧은 링크 저장/조�
   var out = function(body){
     return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
   };
-  if(e.parameter.token !== '${dc.token}') return out('null');
-
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName('VocaTestLinks');
   if(!sh){ sh = ss.insertSheet('VocaTestLinks'); sh.appendRow(['key','payload','저장시각']); }
   var key = e.parameter.key;
 
-  if(e.parameter.action === 'store'){                // 테스트 만들 때: 단어 데이터를 시트에 저장
+  if(e.parameter.action === 'store'){                // 테스트 만들 때: 단어 데이터를 시트에 저장 (토큰 필요)
+    if(e.parameter.token !== '${dc.token}') return out('null');
     var rows = sh.getDataRange().getValues();
     var found = false;
     for(var i=1;i<rows.length;i++){
@@ -1375,7 +1374,7 @@ function doGet(e){                                  // 짧은 링크 저장/조�
     if(!found) sh.appendRow([key, e.parameter.payload, new Date()]);
     return out('"ok"');
   }
-  if(e.parameter.action === 'fetch'){                // 학생이 링크 열 때: 저장해둔 단어 데이터 조회
+  if(e.parameter.action === 'fetch'){                // 학생이 링크 열 때: 세션 키만으로 조회 (키 자체가 이미 추측 불가능한 무작위값이라 토큰 불필요 → 링크가 더 짧아짐)
     var rows2 = sh.getDataRange().getValues();
     for(var j=1;j<rows2.length;j++){
       if(rows2[j][0] === key) return out(rows2[j][1]);
@@ -1454,7 +1453,7 @@ function StudentApp(sessionKey, dataStr, remote){
         <div class="mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-brand-500 text-3xl shadow-soft floaty">📚</div>
         <p class="text-sm font-bold text-slate-400">테스트를 불러오는 중…</p>
       </div>`;
-    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey) + '&token=' + encodeURIComponent(remote.rt||'');
+    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey);
     jsonpFetch(url).then(payload=>{
       if(!payload){ return renderExpired('테스트 정보를 불러오지 못했어요. 인터넷 연결을 확인하거나 링크가 올바른지 확인해 주세요.'); }
       initStudentApp(sessionKey, payload);

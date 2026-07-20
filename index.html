@@ -234,8 +234,9 @@ function sigString(p){
   const w = (p.w||[]).map(x=>x.e+'\u241f'+x.k).join('\u241e');
   return [SIG_SALT, p.s, p.exp||0, p.mode, p.sec, p.dm||'', p.dv||'', p.dt||'', w].join('\u2016');
 }
+function signPayload(p){ return { ...p, g: fnv1a(sigString(p)) }; } // 서명 붙인 payload 객체 반환
 function buildLink(p){ // p: sig 없는 payload → 서명 붙여 링크 반환
-  const signed = { ...p, g: fnv1a(sigString(p)) };
+  const signed = signPayload(p);
   return location.origin + location.pathname + '?session=' + p.s + '&d=' + b64enc(signed);
 }
 function verifyPayload(p){
@@ -292,6 +293,22 @@ async function sendResult(dm, dv, dt, result){
     }
   }catch(e){}
   return false;
+}
+
+// JSONP GET (Apps Script 응답을 CORS 제약 없이 읽기 위함 — <script> 태그는 CORS 대상이 아님)
+// 응답이 콜백(payload)로 안 오거나 타임아웃되면 null
+function jsonpFetch(url, timeoutMs=10000){
+  return new Promise(resolve=>{
+    const cbName = '__vt_cb_' + uid(8);
+    const script = document.createElement('script');
+    let settled = false;
+    const cleanup = ()=>{ delete window[cbName]; script.remove(); clearTimeout(timer); };
+    window[cbName] = (data)=>{ if(settled) return; settled=true; cleanup(); resolve(data); };
+    const timer = setTimeout(()=>{ if(settled) return; settled=true; cleanup(); resolve(null); }, timeoutMs);
+    script.onerror = ()=>{ if(settled) return; settled=true; cleanup(); resolve(null); };
+    script.src = url + (url.includes('?')?'&':'?') + 'callback=' + cbName;
+    document.body.appendChild(script);
+  });
 }
 
 // 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
@@ -480,7 +497,10 @@ function confetti(){
 function boot(){
   const q = new URLSearchParams(location.search);
   const session = q.get('session');
-  if(session){ StudentApp(session, q.get('d')); }
+  if(session){
+    if(q.get('r')==='1'){ StudentApp(session, null, { rv:q.get('rv')||'', rt:q.get('rt')||'' }); }
+    else { StudentApp(session, q.get('d')); }
+  }
   else { TeacherApp(); }
 }
 
@@ -534,13 +554,21 @@ function parsePairs(raw){
   const rawTokens = raw.split(/[,;\n\r\t]+/).map(s=>s.trim()).filter(Boolean);
   const frags=[];
   rawTokens.forEach((tok, tokIdx)=>{
-    let en='',ko='',phase='en';
-    const push=()=>{ en=en.trim(); ko=ko.trim(); if(en||ko) frags.push({en,ko,tok:tokIdx}); en='';ko='';phase='en'; };
+    let en='',ko='',phase='en',other='';
+    const push=()=>{ en=en.trim(); ko=ko.trim(); if(en||ko) frags.push({en,ko,tok:tokIdx}); en='';ko='';phase='en'; other=''; };
     for(const ch of tok){
-      if(isKo(ch)){ phase='ko'; ko+=ch; }
-      else if(isEn(ch)){ if(phase==='ko'){ push(); } phase='en'; en+=ch; }
-      else { if(phase==='en') en+=ch; else ko+=ch; }
+      if(isKo(ch)){
+        ko += other; other='';           // 한글 앞에 있던 특수문자는 뜻 쪽으로
+        phase='ko'; ko+=ch;
+      } else if(isEn(ch)){
+        if(phase==='ko'){ ko+=other; other=''; push(); } // 전환 직전 특수문자는 직전 뜻에 붙여 보존 후 전환
+        en += other; other='';           // 영단어 앞에 있던 특수문자는 영단어 쪽으로
+        phase='en'; en+=ch;
+      } else {
+        other += ch;                      // 다음 실제 글자가 나올 때까지 보류(어느 쪽 소속인지 그때 결정) — 유실 방지
+      }
     }
+    if(other){ if(phase==='ko') ko+=other; else en+=other; } // 토큰 끝에 남은 특수문자는 마지막 활성 쪽에
     push();
   });
   const pairs=[];
@@ -1161,9 +1189,33 @@ function renderMake(root){
           <button id="t-copy" class="btn3d bg-brand-500 py-3 text-sm text-white" style="--btn-edge:#4338ca">링크 복사</button>
           <a href="${esc(link)}" target="_blank" class="btn3d grid place-items-center bg-slate-800 py-3 text-sm text-white" style="--btn-edge:#0f172a">미리보기</a>
         </div>
+        ${dm==='hook'? `
+        <button id="t-shorten" class="btn3d mt-2 w-full bg-white py-2.5 text-sm text-brand-600" style="--btn-edge:#e2e8f0">🔗 짧은 링크 만들기</button>
+        <div id="t-short-result"></div>`:''}
         <p class="mt-3 text-[11px] leading-relaxed text-slate-400">만료일이 지나면 어느 기기에서든 자동 차단돼요. <b>세션 관리</b> 탭에서 미리 만료시킬 수도 있어요.</p>
       </section>`;
     $('#t-copy').onclick=async()=>{ (await copyText(link))? toast('링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+    const shortenBtn=$('#t-shorten');
+    if(shortenBtn) shortenBtn.onclick=async()=>{
+      shortenBtn.disabled=true; shortenBtn.textContent='짧은 링크 만드는 중…';
+      const signed = signPayload(payload);
+      const storeUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+      const res = await jsonpFetch(storeUrl);
+      shortenBtn.disabled=false; shortenBtn.textContent='🔗 짧은 링크 만들기';
+      if(res==='ok'){
+        const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv) + '&rt=' + encodeURIComponent(dt);
+        const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
+        $('#t-short-result').innerHTML = `
+          <div class="mt-2 flex items-center gap-2 rounded-xl bg-grass-50 px-4 py-3 ring-1 ring-grass-100">
+            <span class="min-w-0 flex-1 truncate text-sm font-bold text-grass-700">${esc(shortLink)}</span>
+            <button id="t-short-copy" class="btn3d shrink-0 bg-grass-500 px-3 py-2 text-xs text-white" style="--btn-edge:#15803d">복사</button>
+          </div>`;
+        $('#t-short-copy').onclick=async()=>{ (await copyText(shortLink))? toast('짧은 링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+        toast('짧은 링크를 만들었어요 🔗');
+      } else {
+        toast('짧은 링크 저장에 실패했어요 — 원래 링크를 사용해주세요','bad');
+      }
+    };
     $('#t-result').scrollIntoView({behavior:'smooth',block:'center'});
     toast('세션 발급 완료 🔑');
   };
@@ -1208,6 +1260,25 @@ function renderSessions(root){
   root.querySelectorAll('[data-remove]').forEach(b=> b.onclick=()=>{
     let list=DB.sessions(); list=list.filter(x=>x.key!==b.dataset.remove); DB.saveSessions(list); renderSessions(root);
   });
+  root.querySelectorAll('[data-copy-short]').forEach(b=> b.onclick=async()=>{
+    const s=DB.sessions().find(x=>x.key===b.dataset.copyShort);
+    if(s && s.shortLink){ (await copyText(s.shortLink))? toast('짧은 링크 복사 📋'):toast('복사 실패','bad'); }
+  });
+  root.querySelectorAll('[data-make-short]').forEach(b=> b.onclick=async()=>{
+    const key=b.dataset.makeShort; const s=DB.sessions().find(x=>x.key===key); if(!s || !s.dv) return;
+    b.disabled=true; b.textContent='만드는 중…';
+    const signed = signPayload({ v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: s.snapshot||[] });
+    const storeUrl = s.dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(s.dt||'') + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+    const res = await jsonpFetch(storeUrl);
+    if(res==='ok'){
+      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv) + '&rt=' + encodeURIComponent(s.dt||'');
+      const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
+      toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
+    } else {
+      b.disabled=false; b.textContent='🔗 짧은 링크 만들기';
+      toast('짧은 링크 저장에 실패했어요','bad');
+    }
+  });
   const clr=$('#s-clear'); if(clr) clr.onclick=()=>{ DB.saveSessions(DB.sessions().filter(s=>s.status==='active')); renderSessions(root); };
 
   function sessionCard(s){
@@ -1247,6 +1318,12 @@ function renderSessions(root){
         <button data-expire="${s.key}" class="rounded-lg py-2 text-xs font-bold ${s.status==='active'?'bg-coral-50 text-coral-600':'bg-grass-50 text-grass-600'}">${s.status==='active'?'지금 만료':'재활성화'}</button>
         <button data-remove="${s.key}" class="rounded-lg bg-slate-100 py-2 text-xs font-bold text-slate-400">삭제</button>
       </div>
+      ${s.shortLink? `
+      <div class="mt-2 flex items-center gap-1.5 rounded-lg bg-grass-50 px-2.5 py-2">
+        <span class="min-w-0 flex-1 truncate text-[11px] font-bold text-grass-700">🔗 ${esc(s.shortLink)}</span>
+        <button data-copy-short="${s.key}" class="shrink-0 rounded-md bg-grass-500 px-2 py-1 text-[10px] font-bold text-white">복사</button>
+      </div>` : (s.dm==='hook' ? `
+      <button data-make-short="${s.key}" class="mt-2 w-full rounded-lg py-1.5 text-[11px] font-bold text-brand-500">🔗 짧은 링크 만들기</button>` : '')}
     </div>`;
   }
 }
@@ -1262,7 +1339,7 @@ function renderResultsTab(root){
   const dc = deliveryCfg();
   const useHook = dc.mode==='hook';
   const guideCode =
-`function doPost(e){
+`function doPost(e){                                // 학생이 결과를 보낼 때(POST)
   var d = JSON.parse(e.postData.contents);
   if(d.token !== '${dc.token}'){                    // 비밀 토큰 확인
     return ContentService.createTextOutput('no');
@@ -1275,6 +1352,36 @@ function renderResultsTab(root){
   s.appendRow([new Date(), d.name, d.score, d.timeStr, (d.wrong||[]).join(', '),
                d.range || '', d.count || '', d.qtype || '']);
   return ContentService.createTextOutput('ok');
+}
+
+function doGet(e){                                  // 짧은 링크 저장/조회(GET, 선택 기능)
+  var cb = e.parameter.callback || 'callback';
+  var out = function(body){
+    return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  };
+  if(e.parameter.token !== '${dc.token}') return out('null');
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName('VocaTestLinks');
+  if(!sh){ sh = ss.insertSheet('VocaTestLinks'); sh.appendRow(['key','payload','저장시각']); }
+  var key = e.parameter.key;
+
+  if(e.parameter.action === 'store'){                // 테스트 만들 때: 단어 데이터를 시트에 저장
+    var rows = sh.getDataRange().getValues();
+    var found = false;
+    for(var i=1;i<rows.length;i++){
+      if(rows[i][0] === key){ sh.getRange(i+1,2).setValue(e.parameter.payload); sh.getRange(i+1,3).setValue(new Date()); found = true; break; }
+    }
+    if(!found) sh.appendRow([key, e.parameter.payload, new Date()]);
+    return out('"ok"');
+  }
+  if(e.parameter.action === 'fetch'){                // 학생이 링크 열 때: 저장해둔 단어 데이터 조회
+    var rows2 = sh.getDataRange().getValues();
+    for(var j=1;j<rows2.length;j++){
+      if(rows2[j][0] === key) return out(rows2[j][1]);
+    }
+  }
+  return out('null');
 }`;
 
   root.innerHTML = `
@@ -1315,7 +1422,7 @@ function renderResultsTab(root){
         </div>
 
         <div class="mt-3 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">
-          🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 웹훅 주소는 <b>쓰기 전용</b>이라 시트를 읽거나 계정에 접근할 수 없습니다. 토큰이 링크 변조도 막아줘요.
+          🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 모든 요청은 비밀 토큰이 맞을 때만 처리되고, 시트 전체나 구글 계정 자체에는 접근할 수 없습니다(정해진 딱 한 칸만 주고받음). "🔗 짧은 링크 만들기"를 쓰면 단어 데이터를 이 시트의 별도 탭(VocaTestLinks)에 저장해두고 짧은 키로 불러오는 방식이라 토큰이 없으면 조회도 안 돼요.
         </div>
       </div>
     </section>
@@ -1335,9 +1442,30 @@ function renderResultsTab(root){
 /* ============================================================
    학생 앱
    ============================================================ */
-function StudentApp(sessionKey, dataStr){
-  // 1) 데이터 복원
-  const payload = dataStr ? b64dec(dataStr) : null;
+// 짧은 링크(?r=1&rv=웹훅주소&rt=토큰)면 원격에서 payload를 받아온 뒤 initStudentApp 실행
+function StudentApp(sessionKey, dataStr, remote){
+  if(dataStr){
+    initStudentApp(sessionKey, b64dec(dataStr));
+    return;
+  }
+  if(remote && remote.rv){
+    app.innerHTML = `
+      <div class="flex min-h-[70dvh] flex-col items-center justify-center text-center anim-in">
+        <div class="mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-brand-500 text-3xl shadow-soft floaty">📚</div>
+        <p class="text-sm font-bold text-slate-400">테스트를 불러오는 중…</p>
+      </div>`;
+    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey) + '&token=' + encodeURIComponent(remote.rt||'');
+    jsonpFetch(url).then(payload=>{
+      if(!payload){ return renderExpired('테스트 정보를 불러오지 못했어요. 인터넷 연결을 확인하거나 링크가 올바른지 확인해 주세요.'); }
+      initStudentApp(sessionKey, payload);
+    });
+    return;
+  }
+  renderExpired('테스트 정보를 불러올 수 없어요. 링크가 올바른지 확인해 주세요.');
+}
+
+function initStudentApp(sessionKey, payload){
+  // 1) 데이터 확인
   if(!payload || !payload.w || !payload.w.length){
     return renderExpired('테스트 정보를 불러올 수 없어요. 링크가 올바른지 확인해 주세요.');
   }

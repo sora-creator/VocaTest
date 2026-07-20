@@ -360,16 +360,20 @@ function pickFolderModal(folders, title='폴더 선택', words=DB.words()){
     const rootCnt = words.length;
     const ov=document.createElement('div');
     ov.className='fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 p-4 sm:items-center anim-in';
-    ov.innerHTML=`<div class="max-h-[70vh] w-full max-w-xs overflow-y-auto rounded-3xl bg-white p-5 shadow-card">
-      <p class="mb-3 text-center text-sm font-black text-slate-700">${esc(title)}</p>
-      <div class="flex flex-col gap-1.5">
-        <button data-pick="" class="rounded-xl bg-brand-50 px-3 py-2.5 text-left text-sm font-bold text-brand-700">📚 전체 단어장 <span class="text-xs font-normal text-brand-400">(${rootCnt})</span></button>
-        ${tree.map(f=>{
-          const cnt = wordsInFolder(words, folders, f.id, true).length;
-          return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-slate-50">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
-        }).join('')}
+    ov.innerHTML=`<div class="flex max-h-[75vh] w-full max-w-xs flex-col overflow-hidden rounded-3xl bg-white shadow-card">
+      <p class="shrink-0 px-5 pb-3 pt-5 text-center text-sm font-black text-slate-700">${esc(title)}</p>
+      <div class="min-h-0 flex-1 overflow-y-auto px-5">
+        <div class="flex flex-col gap-1.5 pb-3">
+          <button data-pick="" class="rounded-xl bg-brand-50 px-3 py-2.5 text-left text-sm font-bold text-brand-700">📚 전체 단어장 <span class="text-xs font-normal text-brand-400">(${rootCnt})</span></button>
+          ${tree.map(f=>{
+            const cnt = wordsInFolder(words, folders, f.id, true).length;
+            return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-slate-50">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
+          }).join('')}
+        </div>
       </div>
-      <button id="pk-cancel" class="btn3d mt-4 w-full bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+      <div class="shrink-0 border-t border-slate-100 p-4">
+        <button id="pk-cancel" class="btn3d w-full bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+      </div>
     </div>`;
     document.body.appendChild(ov);
     const done=(v)=>{ ov.remove(); resolve(v); };
@@ -393,22 +397,28 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
     document.body.appendChild(ov);
     const done=(v)=>{ ov.remove(); resolve(v); };
     function render(){
-      ov.innerHTML=`<div class="max-h-[75vh] w-full max-w-xs overflow-y-auto rounded-3xl bg-white p-5 shadow-card">
-        <p class="mb-1 text-center text-sm font-black text-slate-700">${esc(title)}</p>
-        <p class="mb-3 text-center text-[11px] text-slate-400"><b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
-        <div class="flex flex-col gap-1.5">
-          <button data-pick-all class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${sel.size===0?'bg-brand-50 text-brand-700':'text-slate-600 hover:bg-slate-50'}">📚 전체 단어장 <span class="text-xs font-normal text-slate-400">(${rootCnt})</span></button>
-          ${tree.map(f=>{
-            const cnt = wordsInFolder(words, folders, f.id, true).length;
-            const isSel = sel.has(f.id);
-            return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
-          }).join('')}
+      const prevScroll = ov.querySelector('[data-scroll-area]')?.scrollTop || 0; // 선택할 때마다 다시 그려도 목록이 맨 위로 안 튀도록 유지
+      ov.innerHTML=`<div class="flex max-h-[75vh] w-full max-w-xs flex-col overflow-hidden rounded-3xl bg-white shadow-card">
+        <div class="shrink-0 px-5 pb-2 pt-5">
+          <p class="mb-1 text-center text-sm font-black text-slate-700">${esc(title)}</p>
+          <p class="text-center text-[11px] text-slate-400"><b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
         </div>
-        <div class="mt-4 grid grid-cols-2 gap-2">
+        <div data-scroll-area class="min-h-0 flex-1 overflow-y-auto px-5">
+          <div class="flex flex-col gap-1.5 pb-3">
+            <button data-pick-all class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${sel.size===0?'bg-brand-50 text-brand-700':'text-slate-600 hover:bg-slate-50'}">📚 전체 단어장 <span class="text-xs font-normal text-slate-400">(${rootCnt})</span></button>
+            ${tree.map(f=>{
+              const cnt = wordsInFolder(words, folders, f.id, true).length;
+              const isSel = sel.has(f.id);
+              return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
+            }).join('')}
+          </div>
+        </div>
+        <div class="shrink-0 grid grid-cols-2 gap-2 border-t border-slate-100 p-4">
           <button id="pkm-cancel" class="btn3d bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
           <button id="pkm-ok" class="btn3d bg-brand-500 py-3 text-sm font-bold text-white" style="--btn-edge:#4338ca">선택 완료${sel.size?` (${sel.size})`:''}</button>
         </div>
       </div>`;
+      const scrollArea = ov.querySelector('[data-scroll-area]'); if(scrollArea) scrollArea.scrollTop = prevScroll;
       ov.querySelector('[data-pick-all]').onclick=()=>{ sel=new Set(); anchor=null; render(); };
       ov.querySelectorAll('[data-pick]').forEach(b=>{
         b.onclick=(e)=>{
@@ -1557,6 +1567,7 @@ function initStudentApp(sessionKey, payload){
 
   const words = payload.w.map(x=>({en:x.e, ko:x.k}));
   const cfg = { mode: payload.mode||'mixed', sec: payload.sec||4, name: payload.n||'', dm: payload.dm||'', dv: payload.dv||'', dt: payload.dt||'', rng: payload.rng||'', cnt: payload.cnt||'' };
+  document.title = cfg.rng ? `VocaTest · ${cfg.rng}` : 'VocaTest · 보카테스트';
 
   renderGate();
 
@@ -1565,7 +1576,7 @@ function initStudentApp(sessionKey, payload){
     app.innerHTML = `
       <div class="flex min-h-[70dvh] flex-col items-center justify-center text-center anim-in">
         <div class="mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-brand-500 text-4xl shadow-soft floaty">📚</div>
-        <p class="text-xs font-black tracking-widest text-brand-400">VOCATEST</p>
+        <p class="text-xs font-black tracking-widest text-brand-400">VOCATEST${cfg.rng? ` · ${esc(cfg.rng)}`:''}</p>
         <h1 class="text-2xl font-extrabold">영단어 테스트</h1>
         ${cfg.name? `<p class="mt-1 font-semibold text-brand-500">${esc(cfg.name)}</p>`:''}
         <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식',mixed:'혼합'})[cfg.mode]}</p>

@@ -652,6 +652,7 @@ function renderWords(root){
         ${crumbs.map(f=>`<span class="text-slate-300">›</span><button data-crumb="${f.id}" class="rounded-lg px-2 py-1 ${f.id===curFolder?'bg-brand-100 text-brand-600':'text-slate-400 hover:bg-slate-100'}">${esc(f.name)}</button>`).join('')}
       </div>
       <div class="flex shrink-0 items-center gap-1">
+        <button id="w-dedupe" title="같은 폴더 안 중복 단어를 하나로 정리" class="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm">🧹 중복 정리</button>
         <button id="w-export" title="단어장 전체를 파일로 저장" class="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm">⬇ 백업</button>
         <button id="w-import" title="백업 파일에서 복원" class="rounded-lg bg-white px-2 py-1.5 text-[11px] font-bold text-slate-500 shadow-sm">⬆ 복원</button>
         <input type="file" id="w-import-file" accept="application/json" class="hidden" />
@@ -719,6 +720,12 @@ function renderWords(root){
         <p class="mt-2 text-xs text-slate-400">줄바꿈·콤마·띄어쓰기로 여러 개를 한꺼번에. (예: <b>apple 사과, run 달리다</b>)</p>
         <textarea id="w-bulk" rows="4" placeholder="apple 사과&#10;run 달리다&#10;happy 행복한&#10;&#10;또는: apple 사과, run 달리다, book 책" class="mt-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-brand-400"></textarea>
         <button id="w-bulk-add" class="btn3d mt-2 w-full bg-slate-800 py-2.5 text-sm text-white" style="--btn-edge:#0f172a">일괄 추가</button>
+      </details>
+      <details class="mt-2">
+        <summary class="cursor-pointer text-xs font-bold text-brand-600">📁 폴더 여러 개 한 번에 만들기</summary>
+        <p class="mt-2 text-xs text-slate-400">폴더 이름 앞에 <b>#</b>을 붙이고, 그 아래에 단어를 넣어주세요. ${curFolder? `<b>'${esc(crumbs[crumbs.length-1].name)}'</b> 폴더`:'전체 단어장'} 바로 밑에 만들어져요. 같은 이름의 폴더가 이미 있으면 거기에 합쳐집니다.</p>
+        <textarea id="w-bulkfolder" rows="8" placeholder="#1과&#10;apple 사과&#10;book 책&#10;&#10;#2과&#10;cat 고양이&#10;dog 개" class="mt-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-brand-400"></textarea>
+        <button id="w-bulkfolder-add" class="btn3d mt-2 w-full bg-slate-800 py-2.5 text-sm text-white" style="--btn-edge:#0f172a">폴더별로 한꺼번에 만들기</button>
       </details>
     </section>
 
@@ -789,6 +796,72 @@ function renderWords(root){
     }
   });
   $('#w-bulk-add').onclick=async()=>{ const raw=$('#w-bulk').value.trim(); if(raw) await addEntries(raw, $('#w-bulk-add')); };
+
+  // 폴더 여러 개 + 단어까지 한 번에 만들기: "#폴더이름" 줄로 구분, 그 아래 줄들은 parsePairs로 해석
+  function parseFolderBulk(raw){
+    const lines = raw.split(/\r?\n/);
+    const groups=[]; let cur=null;
+    for(const line of lines){
+      const trimmed = line.trim();
+      if(!trimmed) continue;
+      const m = trimmed.match(/^#\s*(.+)$/);
+      if(m){ cur = { name:m[1].trim(), lines:[] }; groups.push(cur); }
+      else if(cur){ cur.lines.push(trimmed); }
+    }
+    return groups.filter(g=>g.name);
+  }
+  async function addFolderBulk(raw, btn){
+    const groups = parseFolderBulk(raw);
+    if(!groups.length){ toast('폴더 이름 앞에 #을 붙여주세요 (예: #1과)','bad'); return; }
+    btn.disabled=true;
+    const folders=DB.folders(); const words=DB.words();
+    let totalWords=0, totalFolders=0, failed=0;
+    for(const g of groups){
+      let folder = folders.find(f=>(f.parentId||null)===(curFolder||null) && f.name===g.name);
+      if(!folder){ folder = { id:uid(8), name:g.name, parentId:curFolder }; folders.push(folder); totalFolders++; }
+      const pairs = parsePairs(g.lines.join('\n'));
+      for(const p of pairs){
+        let ko=p.ko;
+        if(!ko){ btn.textContent=`🔎 [${g.name}] 뜻 자동 채우는 중…`; ko = await translateWord(p.en) || ''; if(!ko) failed++; }
+        words.push({ id:uid(8), en:p.en, ko, folderId:folder.id });
+        totalWords++;
+      }
+    }
+    DB.saveFolders(folders); DB.saveWords(words);
+    btn.disabled=false; btn.textContent='폴더별로 한꺼번에 만들기';
+    toast(`폴더 ${totalFolders}개, 단어 ${totalWords}개 추가했어요${failed?` (뜻 확인 필요 ${failed}개)`:''} ✅`);
+    renderWords(root);
+  }
+  $('#w-bulkfolder-add').onclick=async()=>{ const raw=$('#w-bulkfolder').value.trim(); if(raw) await addFolderBulk(raw, $('#w-bulkfolder-add')); };
+
+  // ----- 중복 단어 정리: 같은 폴더 안에서 영단어(대소문자 무시)가 같으면 뜻을 합쳐 하나로 -----
+  function findDuplicateGroups(words){
+    const groups = new Map();
+    words.forEach(w=>{
+      const key = (w.folderId||'null') + '::' + w.en.trim().toLowerCase();
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(w);
+    });
+    return [...groups.values()].filter(g=>g.length>1);
+  }
+  $('#w-dedupe').onclick=async()=>{
+    const words = DB.words();
+    const groups = findDuplicateGroups(words);
+    if(!groups.length){ toast('중복된 단어가 없어요 ✨'); return; }
+    const extra = groups.reduce((sum,g)=>sum+g.length-1, 0);
+    if(!(await askConfirm(`같은 폴더 안에 중복된 단어 ${groups.length}종류(여분 ${extra}개)를 발견했어요.\n뜻을 합쳐서 하나로 정리할까요?`,'정리'))) return;
+    const toRemove = new Set();
+    groups.forEach(group=>{
+      const keep = group[0];
+      const kos = [];
+      group.forEach(w=>{ const k=w.ko.trim(); if(k && !kos.includes(k)) kos.push(k); });
+      keep.ko = kos.join(', ');
+      for(let i=1;i<group.length;i++) toRemove.add(group[i].id);
+    });
+    DB.saveWords(words.filter(w=>!toRemove.has(w.id)));
+    toast(`${groups.length}종류 정리, ${toRemove.size}개 삭제했어요 ✅`);
+    renderWords(root);
+  };
 
   // ----- 백업(내보내기) / 복원(가져오기) — 브라우저 데이터가 지워져도 대비할 수 있도록 -----
   $('#w-export').onclick=()=>{

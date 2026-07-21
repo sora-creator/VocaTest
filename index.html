@@ -674,11 +674,12 @@ function renderWords(root){
         <h2 class="text-sm font-extrabold text-slate-600">📁 폴더 트리</h2>
         <button id="f-new" class="text-xs font-bold text-brand-600">+ 새 폴더</button>
       </div>
-      <p class="mb-2 px-1 text-[11px] text-slate-400">마우스로 드래그해 옮기기 · <b>▲▼</b> 버튼으로 상위/하위 이동 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택 · <b>Ctrl+C/X/V</b> 복사·잘라내기·붙여넣기</p>
+      <p class="mb-2 px-1 text-[11px] text-slate-400"><b>더블클릭</b>으로 폴더 열기(한 번 클릭은 선택만) · 드래그로 옮기기 · <b>▲▼</b> 버튼으로 상위/하위 이동 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택 · <b>Ctrl+C/X/V</b> 복사·잘라내기·붙여넣기</p>
 
       ${treeSel.size? `
       <div class="mb-2 flex items-center gap-1.5 rounded-2xl bg-brand-500 p-2 pl-4 text-white shadow-soft anim-slide">
         <span class="flex-1 text-sm font-black">${treeSel.size}개 폴더 선택</span>
+        ${treeSel.size===1? `<button id="tree-open" class="rounded-lg bg-white px-3 py-1.5 text-xs font-black text-brand-600">열기 ›</button>`:''}
         <button id="tree-cut" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">✂ 잘라내기</button>
         <button id="tree-copy" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">📋 복사</button>
         <button id="tree-none" class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-bold">해제</button>
@@ -951,7 +952,12 @@ function renderWords(root){
         if(treeSel.has(id)) treeSel.delete(id); else treeSel.add(id);
         treeAnchor=id; e.preventDefault(); renderWords(root); return;
       }
-      // 일반 클릭: 그 폴더로 이동 + 단일 선택
+      // 일반 클릭: 윈도우 탐색기처럼 선택만 (폴더 진입은 더블클릭)
+      treeSel.clear(); treeSel.add(id); treeAnchor=id;
+      renderWords(root);
+    });
+    row.addEventListener('dblclick', e=>{
+      if(e.target.closest('[data-tree-toggle],[data-folder-rename],[data-folder-del],[data-folder-outdent],[data-folder-indent]')) return;
       curFolder=id; treeSel.clear(); treeSel.add(id); treeAnchor=id;
       selWords.clear(); selAnchor=null; renderWords(root);
     });
@@ -1024,7 +1030,11 @@ function renderWords(root){
     }
   });
 
-  // ----- 폴더 트리 선택 툴바: 잘라내기/복사/삭제/해제, 클립보드 붙여넣기 -----
+  // ----- 폴더 트리 선택 툴바: 열기(모바일 등 더블클릭 어려운 환경 대비)/잘라내기/복사/삭제/해제, 클립보드 붙여넣기 -----
+  const treeOpen=$('#tree-open'); if(treeOpen) treeOpen.onclick=()=>{
+    const id=[...treeSel][0];
+    curFolder=id; treeAnchor=id; selWords.clear(); selAnchor=null; renderWords(root);
+  };
   const treeCut=$('#tree-cut'); if(treeCut) treeCut.onclick=()=>{
     folderClipboard={ids:[...treeSel], mode:'cut'}; toast(`${treeSel.size}개 폴더 잘라내기`); renderWords(root);
   };

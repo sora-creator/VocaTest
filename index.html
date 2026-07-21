@@ -1132,9 +1132,12 @@ function renderMake(root){
   const excluded = scoped.length - validWords.length;
   const folderLabel = (()=>{
     if(!makeCfg.folderIds || !makeCfg.folderIds.length) return '전체 단어장';
-    const names = makeCfg.folderIds.map(id=> folders.find(f=>f.id===id)?.name).filter(Boolean);
-    if(!names.length) return '전체 단어장';
-    return names.length<=2 ? names.join(', ') : `${names.slice(0,2).join(', ')} 외 ${names.length-2}개`;
+    // 상위폴더 › 하위폴더 형식(폴더 자체가 최상위면 그냥 자기 이름만)
+    const paths = makeCfg.folderIds
+      .map(id=> folderPath(folders, id).map(f=>f.name).join(' › '))
+      .filter(Boolean);
+    if(!paths.length) return '전체 단어장';
+    return paths.length<=2 ? paths.join(', ') : `${paths.slice(0,2).join(', ')} 외 ${paths.length-2}개`;
   })();
 
   // 출제 개수 미리보기 (전체 / 개수 지정 / 퍼센트 지정)
@@ -1277,7 +1280,8 @@ function renderMake(root){
         <div id="t-short-result"></div>`:''}
         <p class="mt-3 text-[11px] leading-relaxed text-slate-400">만료일이 지나면 어느 기기에서든 자동 차단돼요. <b>세션 관리</b> 탭에서 미리 만료시킬 수도 있어요.</p>
       </section>`;
-    $('#t-copy').onclick=async()=>{ (await copyText(link))? toast('링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+    const shareLabel = `📚 영단어 테스트 · ${folderLabel}`;
+    $('#t-copy').onclick=async()=>{ (await copyText(`${shareLabel}\n${link}`))? toast('링크를 복사했어요 📋'):toast('복사 실패','bad'); };
     const shortenBtn=$('#t-shorten');
     if(shortenBtn) shortenBtn.onclick=async()=>{
       shortenBtn.disabled=true; shortenBtn.textContent='짧은 링크 만드는 중…';
@@ -1293,7 +1297,7 @@ function renderMake(root){
             <span class="min-w-0 flex-1 truncate text-sm font-bold text-grass-700">${esc(shortLink)}</span>
             <button id="t-short-copy" class="btn3d shrink-0 bg-grass-500 px-3 py-2 text-xs text-white" style="--btn-edge:#15803d">복사</button>
           </div>`;
-        $('#t-short-copy').onclick=async()=>{ (await copyText(shortLink))? toast('짧은 링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+        $('#t-short-copy').onclick=async()=>{ (await copyText(`${shareLabel}\n${shortLink}`))? toast('짧은 링크를 복사했어요 📋'):toast('복사 실패','bad'); };
         toast('짧은 링크를 만들었어요 🔗');
       } else {
         toast('짧은 링크 저장에 실패했어요 — 원래 링크를 사용해주세요','bad');
@@ -1333,7 +1337,8 @@ function renderSessions(root){
   root.querySelectorAll('[data-copy]').forEach(b=> b.onclick=async()=>{
     const s=DB.sessions().find(x=>x.key===b.dataset.copy);
     const link = rebuildLink(s);
-    (await copyText(link))? toast('링크 복사 📋'):toast('복사 실패','bad');
+    const shareText = `📚 영단어 테스트 · ${s.rng||'전체 단어장'}\n${link}`;
+    (await copyText(shareText))? toast('링크 복사 📋'):toast('복사 실패','bad');
   });
   root.querySelectorAll('[data-expire]').forEach(b=> b.onclick=()=>{
     const list=DB.sessions(); const s=list.find(x=>x.key===b.dataset.expire);
@@ -1345,7 +1350,10 @@ function renderSessions(root){
   });
   root.querySelectorAll('[data-copy-short]').forEach(b=> b.onclick=async()=>{
     const s=DB.sessions().find(x=>x.key===b.dataset.copyShort);
-    if(s && s.shortLink){ (await copyText(s.shortLink))? toast('짧은 링크 복사 📋'):toast('복사 실패','bad'); }
+    if(s && s.shortLink){
+      const shareText = `📚 영단어 테스트 · ${s.rng||'전체 단어장'}\n${s.shortLink}`;
+      (await copyText(shareText))? toast('짧은 링크 복사 📋'):toast('복사 실패','bad');
+    }
   });
   root.querySelectorAll('[data-make-short]').forEach(b=> b.onclick=async()=>{
     const key=b.dataset.makeShort; const s=DB.sessions().find(x=>x.key===key); if(!s || !s.dv) return;

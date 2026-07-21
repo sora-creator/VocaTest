@@ -703,10 +703,10 @@ function renderWords(root){
         const canOutdent = f.parentId != null;
         const canIndent = sibIdx>0;
         return `
-        <div data-tree-row="${f.id}" draggable="true" style="padding-left:${8+f.depth*18}px"
+        <div data-tree-row="${f.id}" style="padding-left:${8+f.depth*18}px"
           class="flex select-none items-center gap-1.5 rounded-xl py-2 pr-1.5 text-sm transition cursor-pointer ${isSel?'bg-brand-100 ring-1 ring-brand-400':isCur?'bg-brand-50':'hover:bg-slate-50'}">
           <button draggable="false" data-tree-toggle="${f.id}" class="grid h-6 w-6 shrink-0 place-items-center text-slate-400 ${hasKids?'':'invisible'}">${isOpen?'▾':'▸'}</button>
-          <span class="shrink-0">📁</span>
+          <span draggable="true" title="드래그해서 이동" class="shrink-0 cursor-grab active:cursor-grabbing">📁</span>
           <span class="min-w-0 flex-1 truncate font-bold ${isCur?'text-brand-700':'text-slate-700'}">${esc(f.name)}</span>
           <span class="shrink-0 text-[11px] text-slate-400">${cnt}개</span>
           <div class="flex shrink-0 flex-col">

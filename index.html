@@ -1128,7 +1128,7 @@ function renderWords(root){
 }
 
 /* ---------- 탭: 테스트 만들기 ---------- */
-let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'' };
+let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false };
 const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
 
 function renderMake(root){
@@ -1137,6 +1137,7 @@ function renderMake(root){
     makeCfg.folderIds = makeCfg.folderIds.filter(id=> folders.find(f=>f.id===id)); // 삭제된 폴더 정리
     if(!makeCfg.folderIds.length) makeCfg.folderIds = null;
   }
+  if(!makeCfg.folderIds || makeCfg.folderIds.length<2) makeCfg.perFolder = false;
   const scoped = wordsInFolders(DB.words(), folders, makeCfg.folderIds, true);
   const validWords = scoped.filter(w=>w.ko && w.ko.trim());
   const excluded = scoped.length - validWords.length;
@@ -1178,7 +1179,13 @@ function renderMake(root){
         <span class="truncate">${esc(folderLabel)}</span><span class="shrink-0 text-xs text-slate-400">변경 ›</span>
       </button>
 
-      <label class="mb-1.5 block text-xs font-bold text-slate-500">🔢 출제 개수</label>
+      ${makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `
+      <label class="mb-4 flex items-center gap-2 rounded-xl bg-brand-50 px-4 py-3 text-xs font-bold text-brand-700 ring-1 ring-brand-100">
+        <input id="t-perfolder" type="checkbox" ${makeCfg.perFolder?'checked':''} class="h-4 w-4 accent-brand-500" />
+        선택한 ${makeCfg.folderIds.length}개 폴더로 <b>각각</b> 테스트 링크 만들기 (폴더당 1개씩)
+      </label>`:''}
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">🔢 출제 개수${makeCfg.perFolder?' <span class="font-normal text-slate-400">(폴더별로 각각 적용)</span>':''}</label>
       <div class="mb-2 grid grid-cols-3 gap-2" id="t-samplemode">
         ${sampleModeCard('all','전체', `${validWords.length}개`)}
         ${sampleModeCard('count','개수 지정','직접 입력')}
@@ -1215,7 +1222,7 @@ function renderMake(root){
 
       ${!enough && makeCfg.mode!=='spelling' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링은 가능)</div>`:''}
 
-      <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">🔗 테스트 링크 만들기</button>
+      <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">${makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `🔗 링크 ${makeCfg.folderIds.length}개 한번에 만들기` : '🔗 테스트 링크 만들기'}</button>
     </section>
 
     <div id="t-result"></div>
@@ -1229,11 +1236,22 @@ function renderMake(root){
     if(pickedFolders===undefined) return;
     makeCfg.folderIds = pickedFolders; renderMake(root);
   };
+  const pfEl=$('#t-perfolder'); if(pfEl) pfEl.onchange=()=>{ makeCfg.perFolder=pfEl.checked; renderMake(root); };
   root.querySelectorAll('[data-samplemode]').forEach(b=> b.onclick=()=>{ makeCfg.sampleMode=b.dataset.samplemode; renderMake(root); });
   const scEl=$('#t-samplecount'); if(scEl) scEl.addEventListener('change',()=>{ makeCfg.sampleCount=scEl.value; renderMake(root); });
   const spEl=$('#t-samplepercent'); if(spEl) spEl.addEventListener('change',()=>{ makeCfg.samplePercent=spEl.value; renderMake(root); });
 
   $('#t-make').onclick=()=>{
+    const dcCheck = deliveryCfg();
+    if(dcCheck.mode==='hook' && !dcCheck.url){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
+
+    if(makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2){
+      const results = makeCfg.folderIds.map(fid=>buildOneLink(fid));
+      renderMultiResults(results);
+      toast('세션 발급 완료 🔑');
+      return;
+    }
+
     const valid = wordsInFolders(DB.words(), DB.folders(), makeCfg.folderIds, true).filter(w=>w.ko && w.ko.trim());
     if(valid.length<1){ toast('뜻이 있는 단어를 먼저 추가하세요','bad'); return; }
 
@@ -1322,6 +1340,120 @@ function renderMake(root){
     $('#t-result').scrollIntoView({behavior:'smooth',block:'center'});
     toast('세션 발급 완료 🔑');
   };
+
+  // 폴더 하나에 대해 현재 makeCfg 설정(출제개수/유형/만료일/공부시간/전송설정)을 그대로 적용해 세션+링크 1개를 만듦
+  function buildOneLink(fid){
+    const label = folderPath(DB.folders(), fid).map(f=>f.name).join(' › ') || '전체 단어장';
+    const valid = wordsInFolders(DB.words(), DB.folders(), [fid], true).filter(w=>w.ko && w.ko.trim());
+    if(valid.length<1) return { ok:false, label, reason:'뜻이 있는 단어가 없어요' };
+
+    let sampleN = valid.length;
+    if(makeCfg.sampleMode==='count'){
+      const n=parseInt(makeCfg.sampleCount,10);
+      if(!n || n<1) return { ok:false, label, reason:'출제할 개수를 입력하세요' };
+      sampleN = Math.min(n, valid.length);
+    } else if(makeCfg.sampleMode==='percent'){
+      const p=parseInt(makeCfg.samplePercent,10);
+      if(!p || p<1) return { ok:false, label, reason:'출제할 퍼센트를 입력하세요' };
+      sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
+    }
+    const picked = shuffle(valid).slice(0, sampleN);
+    if(makeCfg.mode!=='spelling' && picked.length<4) return { ok:false, label, reason:'객관식은 뜻 있는 단어 4개 이상 필요해요' };
+
+    const key = uid(12);
+    const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
+    const dc = deliveryCfg();
+    const dm = dc.mode==='none' ? '' : dc.mode;
+    const dv = dm==='hook' ? (dc.url||'') : '';
+    const dt = dm==='hook' ? (dc.token||'') : '';
+    const countLabel = makeCfg.sampleMode==='all' ? `${picked.length}개(전체)`
+                      : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
+                      : `${picked.length}개(전체 ${valid.length}개 중 ${makeCfg.samplePercent}%)`;
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), mode:makeCfg.mode, sec:makeCfg.studySec,
+                      exp, dm, dv, dt, rng:label, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
+    const link = buildLink(payload);
+
+    const sessions=DB.sessions();
+    sessions.unshift({ key, name:payload.n, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
+                       created:Date.now(), exp, dm, dv, dt, rng:label, cnt:countLabel, status:'active',
+                       snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
+    DB.saveSessions(sessions);
+
+    return { ok:true, label, link, key, payload, dm, dv, dt, count:picked.length, exp };
+  }
+
+  // 폴더별로 각각 만든 링크 여러 개를 한 화면에 카드로 나열 (실패한 폴더는 사유와 함께 건너뜀 표시)
+  function renderMultiResults(results){
+    const okResults = results.filter(r=>r.ok);
+    const shareLabelFor = (label)=> `📚 영단어 테스트 · ${label}`;
+    $('#t-result').innerHTML = `
+      <section class="anim-in mt-4 flex flex-col gap-3">
+        ${okResults.length>1? `<button id="t-copyall" class="btn3d w-full bg-slate-800 py-3 text-sm text-white" style="--btn-edge:#0f172a">📋 전체 링크(${okResults.length}개) 한번에 복사</button>`:''}
+        ${results.map((r,i)=>{
+          if(!r.ok) return `<div class="rounded-2xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600 ring-1 ring-coral-100">⚠️ <b>${esc(r.label)}</b>: ${esc(r.reason)} — 건너뛰었어요</div>`;
+          const expText = r.exp ? `${new Date(r.exp).getFullYear()}. ${new Date(r.exp).getMonth()+1}. ${new Date(r.exp).getDate()}` : '무제한';
+          const dText = r.dm==='hook' ? '📊 구글시트 자동전송' : '📋 결과 수동 전송';
+          return `
+          <div class="rounded-3xl bg-brand-50 p-4 shadow-card ring-1 ring-brand-100">
+            <div class="mb-2 flex items-center gap-2 text-brand-700"><span class="text-base">✅</span><b class="text-sm">${esc(r.label)}</b><span class="text-[11px] font-normal text-slate-400">· ${r.count}개</span></div>
+            <div class="mb-2 flex flex-wrap gap-1.5">
+              <span class="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-brand-600 shadow-sm">🔒 만료: ${expText}</span>
+              <span class="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-grass-600 shadow-sm">${dText}</span>
+            </div>
+            <div class="mb-2 break-all rounded-xl bg-white px-3 py-2 text-[11px] text-slate-500 shadow-sm">${esc(r.link)}</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button data-mcopy="${i}" class="btn3d bg-brand-500 py-2.5 text-xs text-white" style="--btn-edge:#4338ca">링크 복사</button>
+              <a href="${esc(r.link)}" target="_blank" class="btn3d grid place-items-center bg-slate-800 py-2.5 text-xs text-white" style="--btn-edge:#0f172a">미리보기</a>
+            </div>
+            ${r.dm==='hook'? `<div data-mshort="${i}" class="mt-2"></div>`:''}
+          </div>`;
+        }).join('')}
+      </section>
+    `;
+
+    const copyAllBtn = $('#t-copyall');
+    if(copyAllBtn) copyAllBtn.onclick=async()=>{
+      const text = okResults.map(r=>`${shareLabelFor(r.label)}\n${r.link}`).join('\n\n');
+      (await copyText(text))? toast('전체 링크를 복사했어요 📋'):toast('복사 실패','bad');
+    };
+
+    results.forEach((r,i)=>{
+      if(!r.ok) return;
+      const copyBtn = $(`[data-mcopy="${i}"]`);
+      if(copyBtn) copyBtn.onclick=async()=>{ (await copyText(`${shareLabelFor(r.label)}\n${r.link}`))? toast('링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+      if(r.dm!=='hook') return;
+
+      const area = $(`[data-mshort="${i}"]`);
+      async function attemptShorten(){
+        area.innerHTML = `<div class="rounded-xl bg-slate-50 py-2 text-center text-xs font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
+        const signed = signPayload(r.payload);
+        const storeUrl = r.dv + '?action=store&key=' + encodeURIComponent(r.key) + '&token=' + encodeURIComponent(r.dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+        const res = await jsonpFetch(storeUrl);
+        if(res==='ok'){
+          const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv);
+          const list=DB.sessions(); const s=list.find(x=>x.key===r.key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
+          area.innerHTML = `
+            <div class="flex items-center gap-2 rounded-xl bg-grass-50 px-3 py-2 ring-1 ring-grass-100">
+              <span class="min-w-0 flex-1 truncate text-xs font-bold text-grass-700">${esc(shortLink)}</span>
+              <button data-mscopy="${i}" class="btn3d shrink-0 bg-grass-500 px-2.5 py-1.5 text-[11px] text-white" style="--btn-edge:#15803d">복사</button>
+            </div>`;
+          const scopyBtn = $(`[data-mscopy="${i}"]`);
+          if(scopyBtn) scopyBtn.onclick=async()=>{ (await copyText(`${shareLabelFor(r.label)}\n${shortLink}`))? toast('짧은 링크를 복사했어요 📋'):toast('복사 실패','bad'); };
+        } else {
+          area.innerHTML = `
+            <div class="flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 ring-1 ring-amber-100">
+              <span class="flex-1 text-[11px] font-bold text-amber-700">⚠️ 자동 생성 실패</span>
+              <button data-mretry="${i}" class="btn3d shrink-0 bg-amber-500 px-2.5 py-1.5 text-[11px] text-white" style="--btn-edge:#b45309">재시도</button>
+            </div>`;
+          const retryBtn = $(`[data-mretry="${i}"]`);
+          if(retryBtn) retryBtn.onclick=attemptShorten;
+        }
+      }
+      attemptShorten();
+    });
+
+    $('#t-result').scrollIntoView({behavior:'smooth',block:'center'});
+  }
 
   function modeCard(id,title,sub){
     const on=makeCfg.mode===id;

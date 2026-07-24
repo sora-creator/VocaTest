@@ -1205,9 +1205,10 @@ function renderMake(root){
       <label class="mb-1 block text-xs font-bold text-slate-500">👤 학생 이름 (선택)</label>
       <input id="t-student" value="${esc(makeCfg.studentName)}" placeholder="예: 김민준 — 미리 적으면 학생이 이름을 안 적어도 돼요" class="mb-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
       ${makeCfg.studentName && makeCfg.studentName.trim() ? `
-      <button id="t-review" type="button" class="mb-4 w-full rounded-xl border-2 border-dashed border-grass-300 bg-grass-50 px-4 py-2.5 text-left text-xs font-bold text-grass-700">
+      <button id="t-review" type="button" class="mb-1 w-full rounded-xl border-2 border-dashed border-grass-300 bg-grass-50 px-4 py-2.5 text-left text-xs font-bold text-grass-700">
         🔁 <b>${esc(makeCfg.studentName.trim())}</b>님의 최근 오답 단어로 복습 링크 만들기
-      </button>`:''}
+      </button>
+      <p class="mb-4 text-[11px] leading-relaxed text-slate-400">위 <b>출제 범위</b>·아래 <b>출제 개수·문제 유형</b> 설정이 그대로 적용돼요 (범위를 정하면 그 범위 안의 오답만, 개수를 지정하면 그만큼만 추립니다).</p>`:''}
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">문제 유형</label>
       <div class="mb-4 grid grid-cols-3 gap-2" id="t-mode">
@@ -1259,6 +1260,10 @@ function renderMake(root){
       renderMake(root); return;
     }
     const bank = DB.words();
+    // 위에서 고른 출제 범위(폴더)가 있으면 그 범위 안의 단어로만 오답을 좁힘
+    const scopedIds = (makeCfg.folderIds && makeCfg.folderIds.length)
+      ? new Set(wordsInFolders(bank, DB.folders(), makeCfg.folderIds, true).map(w=>w.id))
+      : null;
     const seen = new Set();
     const matched = [];
     res.forEach(tok=>{
@@ -1266,24 +1271,43 @@ function renderMake(root){
       const en = (m? m[1] : tok).trim();
       if(!en || seen.has(en.toLowerCase())) return;
       const w = bank.find(x=> x.en && x.en.trim().toLowerCase()===en.toLowerCase() && x.ko && x.ko.trim());
-      if(w){ seen.add(en.toLowerCase()); matched.push(w); }
+      if(w && (!scopedIds || scopedIds.has(w.id))){ seen.add(en.toLowerCase()); matched.push(w); }
     });
-    if(!matched.length){ toast('단어장에서 일치하는 단어를 찾을 수 없어요 (삭제되었을 수 있어요)','bad'); renderMake(root); return; }
+    if(!matched.length){
+      toast(scopedIds? '선택한 출제 범위 안에서는 이 학생의 최근 오답 단어를 찾을 수 없어요' : '단어장에서 일치하는 단어를 찾을 수 없어요 (삭제되었을 수 있어요)', 'bad');
+      renderMake(root); return;
+    }
+
+    // 위 출제 개수(전체/개수 지정/퍼센트 지정) 설정을 오답 단어 목록에도 동일하게 적용
+    let sampleN = matched.length;
+    if(makeCfg.sampleMode==='count'){
+      const n=parseInt(makeCfg.sampleCount,10);
+      if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); renderMake(root); return; }
+      sampleN = Math.min(n, matched.length);
+    } else if(makeCfg.sampleMode==='percent'){
+      const p=parseInt(makeCfg.samplePercent,10);
+      if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); renderMake(root); return; }
+      sampleN = Math.max(1, Math.round(matched.length*Math.min(p,100)/100));
+    }
+    const picked = shuffle(matched).slice(0, sampleN);
+    if(makeCfg.mode!=='spelling' && picked.length<4){
+      toast(`객관식·혼합은 뜻 있는 오답 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링을 선택하거나 범위를 넓혀보세요)`,'bad');
+      renderMake(root); return;
+    }
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
-    const effMode = matched.length<4 ? 'spelling' : makeCfg.mode;
-    const countLabel = `${matched.length}개(오답 복습)`;
-    const rngLabel = `${name} 오답 복습`;
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:effMode, sec:makeCfg.studySec,
-                      exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, w: matched.map(w=>({e:w.en,k:w.ko})) };
+    const countLabel = `${picked.length}개(오답 복습${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
+    const rngLabel = scopedIds ? `${name} 오답 복습 · ${folderLabel}` : `${name} 오답 복습`;
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:makeCfg.mode, sec:makeCfg.studySec,
+                      exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:name, mode:effMode, sec:makeCfg.studySec, count:matched.length,
+    sessions.unshift({ key, name:payload.n, student:name, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
                        created:Date.now(), exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, status:'active',
-                       snapshot: matched.map(w=>({e:w.en,k:w.ko})) });
+                       snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
-    renderMultiResults([{ ok:true, label:rngLabel, link, key, payload, dm:'hook', dv:dc.url, dt:dc.token, count:matched.length, exp }]);
+    renderMultiResults([{ ok:true, label:rngLabel, link, key, payload, dm:'hook', dv:dc.url, dt:dc.token, count:picked.length, exp }]);
     toast('복습 링크를 만들었어요 🔁');
   };
   root.querySelectorAll('[data-samplemode]').forEach(b=> b.onclick=()=>{ makeCfg.sampleMode=b.dataset.samplemode; renderMake(root); });

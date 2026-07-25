@@ -1169,7 +1169,7 @@ function renderWords(root){
 }
 
 /* ---------- 탭: 테스트 만들기 ---------- */
-let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false, testLabel:'', studentName:'', goalScore:'' };
+let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false, testLabel:'', studentName:'', goalScore:'', reviewKind:'wrong' };
 const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
 
 function renderMake(root){
@@ -1256,10 +1256,14 @@ function renderMake(root){
       <label class="mb-1 block text-xs font-bold text-slate-500">👤 학생 이름 (선택)</label>
       <input id="t-student" value="${esc(makeCfg.studentName)}" placeholder="예: 김민준 — 미리 적으면 학생이 이름을 안 적어도 돼요" class="mb-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
       ${makeCfg.studentName && makeCfg.studentName.trim() ? `
+      <div class="mb-1.5 grid grid-cols-2 gap-2">
+        <button data-reviewkind="wrong" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='wrong'?'border-coral-400 bg-coral-50 text-coral-600':'border-slate-100 bg-white text-slate-400'}">✕ 모르는 단어(오답)</button>
+        <button data-reviewkind="known" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='known'?'border-grass-400 bg-grass-50 text-grass-700':'border-slate-100 bg-white text-slate-400'}">○ 아는 단어(OX)</button>
+      </div>
       <button id="t-review" type="button" class="mb-1 w-full rounded-xl border-2 border-dashed border-grass-300 bg-grass-50 px-4 py-2.5 text-left text-xs font-bold text-grass-700">
-        🔁 <b>${esc(makeCfg.studentName.trim())}</b>님의 최근 오답 단어로 복습 링크 만들기
+        🔁 <b>${esc(makeCfg.studentName.trim())}</b>님이 ${makeCfg.reviewKind==='known'?'<b>아는(O)</b>':'<b>모르는(X)</b>'} 단어로 복습 링크 만들기
       </button>
-      <p class="mb-4 text-[11px] leading-relaxed text-slate-400">위 <b>출제 범위</b>·아래 <b>출제 개수·문제 유형</b> 설정이 그대로 적용돼요 (범위를 정하면 그 범위 안의 오답만, 개수를 지정하면 그만큼만 추립니다).</p>`:''}
+      <p class="mb-4 text-[11px] leading-relaxed text-slate-400">위 <b>출제 범위</b>·아래 <b>출제 개수·문제 유형</b> 설정이 그대로 적용돼요 (범위를 정하면 그 범위 안의 단어만, 개수를 지정하면 그만큼만 추립니다). "아는 단어(O)"는 <b>OX 자가진단</b> 테스트에서 ○로 답한 기록에서만 모아져요.</p>`:''}
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">문제 유형</label>
       <div class="mb-4 grid grid-cols-2 gap-2" id="t-mode">
@@ -1306,16 +1310,19 @@ function renderMake(root){
   $('#t-name').addEventListener('input', e=>{ makeCfg.testLabel = e.target.value; });
   $('#t-student').addEventListener('input', e=>{ makeCfg.studentName = e.target.value; });
   $('#t-goal').addEventListener('input', e=>{ makeCfg.goalScore = e.target.value; });
+  root.querySelectorAll('[data-reviewkind]').forEach(b=> b.onclick=()=>{ makeCfg.reviewKind=b.dataset.reviewkind; renderMake(root); });
   const reviewBtn = $('#t-review');
   if(reviewBtn) reviewBtn.onclick = async ()=>{
     const name = makeCfg.studentName.trim();
+    const kind = makeCfg.reviewKind==='known' ? 'known' : 'wrong';
+    const kindLabel = kind==='known' ? '아는(O)' : '모르는(X)';
     const dc = deliveryCfg();
     if(dc.mode!=='hook' || !dc.url){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
-    reviewBtn.disabled = true; reviewBtn.textContent = '🔁 최근 오답 불러오는 중…';
-    const url = dc.url + '?action=recent&name=' + encodeURIComponent(name) + '&token=' + encodeURIComponent(dc.token);
+    reviewBtn.disabled = true; reviewBtn.textContent = `🔁 최근 ${kindLabel} 단어 불러오는 중…`;
+    const url = dc.url + '?action=recent&name=' + encodeURIComponent(name) + '&kind=' + kind + '&token=' + encodeURIComponent(dc.token);
     const res = await jsonpFetch(url);
     if(!res || !Array.isArray(res) || !res.length){
-      toast('이 학생의 최근 오답 기록을 찾을 수 없어요 (구글시트에 기록이 있는지, Apps Script를 최신 코드로 재배포했는지 확인해 주세요)','bad');
+      toast(`이 학생의 최근 ${kindLabel} 단어 기록을 찾을 수 없어요 (구글시트에 기록이 있는지, Apps Script를 최신 코드로 재배포했는지 확인해 주세요)`,'bad');
       renderMake(root); return;
     }
     const bank = DB.words();
@@ -1333,7 +1340,7 @@ function renderMake(root){
       if(w && (!scopedIds || scopedIds.has(w.id))){ seen.add(en.toLowerCase()); matched.push(w); }
     });
     if(!matched.length){
-      toast(scopedIds? '선택한 출제 범위 안에서는 이 학생의 최근 오답 단어를 찾을 수 없어요' : '단어장에서 일치하는 단어를 찾을 수 없어요 (삭제되었을 수 있어요)', 'bad');
+      toast(scopedIds? `선택한 출제 범위 안에서는 이 학생의 최근 ${kindLabel} 단어를 찾을 수 없어요` : '단어장에서 일치하는 단어를 찾을 수 없어요 (삭제되었을 수 있어요)', 'bad');
       renderMake(root); return;
     }
 
@@ -1350,14 +1357,15 @@ function renderMake(root){
     }
     const picked = shuffle(matched).slice(0, sampleN);
     if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){
-      toast(`객관식·혼합은 뜻 있는 오답 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링·OX를 선택하거나 범위를 넓혀보세요)`,'bad');
+      toast(`객관식·혼합은 뜻 있는 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링·OX를 선택하거나 범위를 넓혀보세요)`,'bad');
       renderMake(root); return;
     }
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
-    const countLabel = `${picked.length}개(오답 복습${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
-    const rngLabel = scopedIds ? `${name} 오답 복습 · ${folderLabel}` : `${name} 오답 복습`;
+    const reviewLabel = kind==='known' ? '아는 단어 복습' : '오답 복습';
+    const countLabel = `${picked.length}개(${reviewLabel}${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
+    const rngLabel = scopedIds ? `${name} ${reviewLabel} · ${folderLabel}` : `${name} ${reviewLabel}`;
     const goal = parseInt(makeCfg.goalScore,10)||0;
     const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
                       exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
@@ -1723,12 +1731,12 @@ function renderResultsTab(root){
     return ContentService.createTextOutput('no');
   }
   var s = SpreadsheetApp.getActiveSheet();
-  var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도'];
+  var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도','아는단어(OX)'];
   if(s.getLastRow() === 0){                         // 시트가 비어있으면 맨 위에 제목행 추가
     s.appendRow(headers);
   }
   s.appendRow([new Date(), d.name, d.range || '', d.score, d.timeStr, (d.wrong||[]).join(', '),
-               d.count || '', d.qtype || '', d.attempt || '1회차']);
+               d.count || '', d.qtype || '', d.attempt || '1회차', (d.known||[]).join(', ')]);
   return ContentService.createTextOutput('ok');
 }
 
@@ -1758,14 +1766,16 @@ function doGet(e){                                  // 짧은 링크 저장/조�
       if(rows2[j][0] === key) return out(rows2[j][1]);
     }
   }
-  if(e.parameter.action === 'recent'){               // 복습 링크 만들 때: 학생 이름으로 최근 오답 모아 조회 (토큰 필요)
+  if(e.parameter.action === 'recent'){               // 복습 링크 만들 때: 학생 이름으로 최근 오답(또는 OX 아는 단어) 모아 조회 (토큰 필요)
     if(e.parameter.token !== '${dc.token}') return out('null');
     var name = (e.parameter.name || '').trim();
+    var kind = e.parameter.kind === 'known' ? 'known' : 'wrong';   // 'wrong'(기본, 모르는/틀린 단어) | 'known'(OX에서 아는 단어)
+    var col = kind === 'known' ? 9 : 5;                            // 아는단어(OX)열(J, index 9) | 오답단어열(F, index 5)
     var resultSheet = ss.getActiveSheet();
     var rows3 = resultSheet.getDataRange().getValues();
     var picked = [];
     for(var k=rows3.length-1; k>=1 && picked.length<5; k--){   // 최신 순으로 최근 시험 5개까지
-      if(String(rows3[k][1]).trim() === name) picked.push(rows3[k][5] || '');   // 오답단어 열(F, 0-based index 5)
+      if(String(rows3[k][1]).trim() === name) picked.push(rows3[k][col] || '');
     }
     var words = [];
     picked.forEach(function(cell){
@@ -1960,7 +1970,8 @@ function initStudentApp(sessionKey, payload){
       total: questions.length,
       queue: shuffle(questions),      // 맞출 때까지 남는 큐
       firstResult: {},                // id -> 최초 정답 여부
-      wrongSet: new Set(),            // 오답노트 (id)
+      wrongSet: new Set(),            // 오답노트 (id) — OX는 "모른다(X)"도 여기 들어감
+      knownSet: new Set(),            // OX 전용: "안다(O)"로 답한 단어 (id)
       mastered: new Set(),
       attempts: 0,
       tryNum,
@@ -2064,9 +2075,9 @@ function initStudentApp(sessionKey, payload){
     if(!(q.id in state.firstResult)) state.firstResult[q.id] = correct;
 
     if(q.type==='ox'){
-      // 자가진단: O/X 상관없이 한 번만 물어보고 다음으로 (다시 묻지 않음), 모르는 단어만 오답노트에 기록
+      // 자가진단: O/X 상관없이 한 번만 물어보고 다음으로 (다시 묻지 않음). 모르는 단어는 오답노트에, 아는 단어는 knownSet에 기록
       beep(correct);
-      if(!correct) state.wrongSet.add(q.id);
+      if(correct) state.knownSet.add(q.id); else state.wrongSet.add(q.id);
       state.queue.shift();
       state.mastered.add(q.id);
       nextQuestion(state);
@@ -2172,6 +2183,7 @@ function initStudentApp(sessionKey, payload){
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     const wrongWords = [...state.wrongSet].map(id=>{ const w=words[id]; return w.ko? `${w.en}(${w.ko})` : w.en; });
+    const knownWords = [...state.knownSet].map(id=>{ const w=words[id]; return w.ko? `${w.en}(${w.ko})` : w.en; });
 
     const grade = pct===100 ? {e:'🏆',t:'완벽해요!',c:'text-amber-500'}
                 : pct>=80  ? {e:'🎉',t:'훌륭해요!',c:'text-grass-600'}
@@ -2194,7 +2206,7 @@ function initStudentApp(sessionKey, payload){
 
     const qtype = ({mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode] || cfg.mode;
     const result = { name: state.name, score: `${firstCorrect}/${state.total} (${pct}%)`,
-                     timeStr, attempts: state.attempts, wrong: wrongWords, date: dateStr, report,
+                     timeStr, attempts: state.attempts, wrong: wrongWords, known: cfg.mode==='ox'? knownWords : [], date: dateStr, report,
                      range: cfg.rng||'', count: cfg.cnt||'', qtype, attempt: `${state.tryNum}회차` };
     const autoSend = !!cfg.dm;
 

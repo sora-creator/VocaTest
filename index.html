@@ -1128,7 +1128,7 @@ function renderWords(root){
 }
 
 /* ---------- 탭: 테스트 만들기 ---------- */
-let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false, testLabel:'', studentName:'' };
+let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false, testLabel:'', studentName:'', goalScore:'' };
 const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
 
 function renderMake(root){
@@ -1211,10 +1211,17 @@ function renderMake(root){
       <p class="mb-4 text-[11px] leading-relaxed text-slate-400">위 <b>출제 범위</b>·아래 <b>출제 개수·문제 유형</b> 설정이 그대로 적용돼요 (범위를 정하면 그 범위 안의 오답만, 개수를 지정하면 그만큼만 추립니다).</p>`:''}
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">문제 유형</label>
-      <div class="mb-4 grid grid-cols-3 gap-2" id="t-mode">
+      <div class="mb-4 grid grid-cols-2 gap-2" id="t-mode">
         ${modeCard('mc','객관식','4지선다')}
         ${modeCard('spelling','주관식','스펠링')}
         ${modeCard('mixed','혼합','랜덤')}
+        ${modeCard('ox','OX 자가진단','안다/모른다')}
+      </div>
+
+      <label class="mb-1.5 block text-xs font-bold text-slate-500">🎯 목표 점수 (선택) <span class="font-normal text-slate-400">— 도달할 때까지 재시험을 안내해요</span></label>
+      <div class="mb-4 flex items-center gap-2">
+        <input id="t-goal" type="number" min="1" max="100" value="${esc(makeCfg.goalScore)}" placeholder="예: 80 (비워두면 목표 없음)" class="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
+        <span class="shrink-0 font-bold text-slate-400">%</span>
       </div>
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">🔒 링크 만료일 <span class="font-normal text-slate-400">(지나면 자동 차단)</span></label>
@@ -1228,7 +1235,7 @@ function renderMake(root){
       <label class="mb-1.5 block text-xs font-bold text-slate-500">틀렸을 때 공부 시간: <span id="t-secval" class="text-brand-600">${makeCfg.studySec}초</span></label>
       <input id="t-sec" type="range" min="2" max="10" value="${makeCfg.studySec}" class="mb-5 w-full accent-brand-500" />
 
-      ${!enough && makeCfg.mode!=='spelling' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링은 가능)</div>`:''}
+      ${!enough && makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링·OX는 가능)</div>`:''}
 
       <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">${makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `🔗 링크 ${makeCfg.folderIds.length}개 한번에 만들기` : '🔗 테스트 링크 만들기'}</button>
     </section>
@@ -1247,6 +1254,7 @@ function renderMake(root){
   const pfEl=$('#t-perfolder'); if(pfEl) pfEl.onchange=()=>{ makeCfg.perFolder=pfEl.checked; renderMake(root); };
   $('#t-name').addEventListener('input', e=>{ makeCfg.testLabel = e.target.value; });
   $('#t-student').addEventListener('input', e=>{ makeCfg.studentName = e.target.value; });
+  $('#t-goal').addEventListener('input', e=>{ makeCfg.goalScore = e.target.value; });
   const reviewBtn = $('#t-review');
   if(reviewBtn) reviewBtn.onclick = async ()=>{
     const name = makeCfg.studentName.trim();
@@ -1290,8 +1298,8 @@ function renderMake(root){
       sampleN = Math.max(1, Math.round(matched.length*Math.min(p,100)/100));
     }
     const picked = shuffle(matched).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && picked.length<4){
-      toast(`객관식·혼합은 뜻 있는 오답 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링을 선택하거나 범위를 넓혀보세요)`,'bad');
+    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){
+      toast(`객관식·혼합은 뜻 있는 오답 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링·OX를 선택하거나 범위를 넓혀보세요)`,'bad');
       renderMake(root); return;
     }
 
@@ -1299,11 +1307,12 @@ function renderMake(root){
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
     const countLabel = `${picked.length}개(오답 복습${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
     const rngLabel = scopedIds ? `${name} 오답 복습 · ${folderLabel}` : `${name} 오답 복습`;
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:makeCfg.mode, sec:makeCfg.studySec,
+    const goal = parseInt(makeCfg.goalScore,10)||0;
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
                       exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:name, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
+    sessions.unshift({ key, name:payload.n, student:name, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length, goal,
                        created:Date.now(), exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, status:'active',
                        snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
@@ -1339,7 +1348,7 @@ function renderMake(root){
       sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
     }
     const picked = shuffle(valid).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
+    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
@@ -1353,12 +1362,13 @@ function renderMake(root){
                       : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
                       : `${picked.length}개(전체 ${valid.length}개 중 ${makeCfg.samplePercent}%)`;
     const studentName = $('#t-student').value.trim();
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:makeCfg.mode, sec:makeCfg.studySec,
+    const goal = parseInt(makeCfg.goalScore,10)||0;
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
                       exp, dm, dv, dt, rng:folderLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
 
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
+    sessions.unshift({ key, name:payload.n, student:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length, goal,
                        created:Date.now(), exp, dm, dv, dt, rng:folderLabel, cnt:countLabel, status:'active',
                        snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
@@ -1432,7 +1442,7 @@ function renderMake(root){
       sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
     }
     const picked = shuffle(valid).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && picked.length<4) return { ok:false, label, reason:'객관식은 뜻 있는 단어 4개 이상 필요해요' };
+    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4) return { ok:false, label, reason:'객관식은 뜻 있는 단어 4개 이상 필요해요' };
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
@@ -1444,12 +1454,13 @@ function renderMake(root){
                       : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
                       : `${picked.length}개(전체 ${valid.length}개 중 ${makeCfg.samplePercent}%)`;
     const studentName = $('#t-student').value.trim();
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:makeCfg.mode, sec:makeCfg.studySec,
+    const goal = parseInt(makeCfg.goalScore,10)||0;
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
                       exp, dm, dv, dt, rng:label, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
 
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length,
+    sessions.unshift({ key, name:payload.n, student:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length, goal,
                        created:Date.now(), exp, dm, dv, dt, rng:label, cnt:countLabel, status:'active',
                        snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
@@ -1599,7 +1610,7 @@ function renderSessions(root){
     const manualExpired = s.status==='expired';
     const timeExpired = s.exp && Date.now() > s.exp;
     const on = !manualExpired && !timeExpired;
-    const modeTxt = {mc:'객관식',spelling:'주관식',mixed:'혼합'}[s.mode]||s.mode;
+    const modeTxt = {mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'}[s.mode]||s.mode;
     const d = new Date(s.created);
     const date = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 
@@ -1625,6 +1636,7 @@ function renderSessions(root){
           </div>
           <div class="mt-0.5 text-xs text-slate-400">${modeTxt} · ${s.count}단어 · ${date}</div>
           ${s.student? `<div class="mt-0.5 text-[11px] font-bold text-grass-600">👤 ${esc(s.student)}</div>`:''}
+          ${s.goal? `<div class="mt-0.5 text-[11px] font-bold text-amber-500">🎯 목표 ${s.goal}%</div>`:''}
           <div class="mt-0.5 text-[11px] font-bold ${timeExpired?'text-slate-400':'text-brand-500'}">🔒 ${expLine}</div>
         </div>
       </div>
@@ -1645,7 +1657,7 @@ function renderSessions(root){
 // 세션 카드에서 링크 재생성 (생성 당시 단어 스냅샷 + 만료일 유지)
 function rebuildLink(s){
   const snap = s.snapshot || DB.words().map(w=>({e:w.en,k:w.ko}));
-  const payload = { v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: snap };
+  const payload = { v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, goal:s.goal||0, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: snap };
   return buildLink(payload);
 }
 
@@ -1660,12 +1672,12 @@ function renderResultsTab(root){
     return ContentService.createTextOutput('no');
   }
   var s = SpreadsheetApp.getActiveSheet();
-  var headers = ['날짜','이름','점수','완주시간','오답단어','출제범위','출제개수','문제유형'];
+  var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도'];
   if(s.getLastRow() === 0){                         // 시트가 비어있으면 맨 위에 제목행 추가
     s.appendRow(headers);
   }
-  s.appendRow([new Date(), d.name, d.score, d.timeStr, (d.wrong||[]).join(', '),
-               d.range || '', d.count || '', d.qtype || '']);
+  s.appendRow([new Date(), d.name, d.range || '', d.score, d.timeStr, (d.wrong||[]).join(', '),
+               d.count || '', d.qtype || '', d.attempt || '1회차']);
   return ContentService.createTextOutput('ok');
 }
 
@@ -1702,7 +1714,7 @@ function doGet(e){                                  // 짧은 링크 저장/조�
     var rows3 = resultSheet.getDataRange().getValues();
     var picked = [];
     for(var k=rows3.length-1; k>=1 && picked.length<5; k--){   // 최신 순으로 최근 시험 5개까지
-      if(String(rows3[k][1]).trim() === name) picked.push(rows3[k][4] || '');
+      if(String(rows3[k][1]).trim() === name) picked.push(rows3[k][5] || '');   // 오답단어 열(F, 0-based index 5)
     }
     var words = [];
     picked.forEach(function(cell){
@@ -1757,6 +1769,9 @@ function doGet(e){                                  // 짧은 링크 저장/조�
         </div>
         <div class="mt-2 rounded-2xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700">
           🔁 <b>테스트 만들기</b> 탭에서 학생 이름을 적으면 "최근 오답 복습 링크 만들기" 버튼이 나타나요 — 이 학생이 최근 본 시험들의 오답을 시트에서 모아 복습용 링크를 자동으로 만들어줘요. 이 기능을 쓰려면 <b>아래 코드를 다시 복사해서 재배포</b>해야 해요(기존 배포에 코드만 덮어써도 됨).
+        </div>
+        <div class="mt-2 rounded-2xl bg-coral-50 p-3 text-[11px] leading-relaxed text-coral-700">
+          ⚠️ 이번 업데이트로 시트 <b>열 순서가 바뀌었어요</b>(출제범위가 이름 옆 C열로 이동, 맨 뒤에 '시도' 열 추가). 이미 결과가 쌓인 시트가 있다면 코드를 재배포해도 <b>기존 행과 제목 행은 그대로 남아있어</b> 새 행부터 열이 안 맞을 수 있어요 — 제목 행(1행)을 아래 코드의 순서에 맞게 직접 고치거나, 새 시트 탭에서 다시 시작하는 걸 추천해요.
         </div>
       </div>
     </section>
@@ -1818,7 +1833,8 @@ function initStudentApp(sessionKey, payload){
   if(rec && rec.status==='expired'){ return renderExpired('이 테스트는 선생님이 마감했어요.'); }
 
   const words = payload.w.map(x=>({en:x.e, ko:x.k}));
-  const cfg = { mode: payload.mode||'mixed', sec: payload.sec||4, name: payload.n||'', sn: payload.sn||'', dm: payload.dm||'', dv: payload.dv||'', dt: payload.dt||'', rng: payload.rng||'', cnt: payload.cnt||'' };
+  const cfg = { mode: payload.mode||'mixed', sec: payload.sec||4, name: payload.n||'', sn: payload.sn||'', dm: payload.dm||'', dv: payload.dv||'', dt: payload.dt||'', rng: payload.rng||'', cnt: payload.cnt||'', goal: payload.goal||0 };
+  const attemptKey = 'vt_attempt_' + sessionKey;
   document.title = cfg.rng ? `VocaTest · ${cfg.rng}` : 'VocaTest · 보카테스트';
 
   renderGate();
@@ -1831,7 +1847,8 @@ function initStudentApp(sessionKey, payload){
         <p class="text-xs font-black tracking-widest text-brand-400">VOCATEST${cfg.rng? ` · ${esc(cfg.rng)}`:''}</p>
         <h1 class="text-2xl font-extrabold">영단어 테스트</h1>
         ${cfg.name? `<p class="mt-1 font-semibold text-brand-500">${esc(cfg.name)}</p>`:''}
-        <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식',mixed:'혼합'})[cfg.mode]}</p>
+        <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode]}</p>
+        ${cfg.goal? `<p class="mt-1 text-xs font-bold text-amber-500">🎯 목표 점수 ${cfg.goal}% — 도달할 때까지 재도전해요!</p>`:''}
         <div class="mt-7 w-full max-w-xs">
           <input id="s-name" value="${esc(cfg.sn)}" placeholder="이름을 입력하세요" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-lg font-bold shadow-sm outline-none focus:border-brand-400" />
           <div class="mt-4 rounded-2xl bg-white px-4 py-3 shadow-sm">
@@ -1840,17 +1857,38 @@ function initStudentApp(sessionKey, payload){
           </div>
           <button id="s-start" class="btn3d mt-3 w-full bg-grass-500 py-4 text-lg text-white" style="--btn-edge:#15803d">시작하기 🚀</button>
         </div>
-        <p class="mt-6 max-w-xs text-sm leading-relaxed text-slate-500 sm:max-w-sm">틀린 단어는 <b>맞출 때까지 반복</b>돼요.<br/>끝까지 완주하면 결과 카드가 나와요!</p>
+        <p class="mt-6 max-w-xs text-sm leading-relaxed text-slate-500 sm:max-w-sm">다음 화면에서 진행 방법을 간단히 안내해 드려요!</p>
       </div>`;
     const nameEl=$('#s-name'); nameEl.focus(); if(cfg.sn) nameEl.select();
     const secEl=$('#s-sec'); secEl.oninput=()=>{ cfg.sec=+secEl.value; $('#s-secval').textContent=secEl.value+'초'; };
     function start(){
       const name=nameEl.value.trim();
       if(!name){ toast('이름을 입력해 주세요','bad'); nameEl.focus(); return; }
-      startQuiz(name);
+      renderTutorial(name);
     }
     $('#s-start').onclick=start;
     nameEl.addEventListener('keydown',e=>{ if(e.key==='Enter') start(); });
+  }
+
+  /* ----- 시험 튜토리얼 ----- */
+  function renderTutorial(studentName){
+    const tips = {
+      mc:      { icon:'🔤', desc:'영단어를 보고 <b>뜻 4개 중 정답</b>을 골라요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
+      spelling:{ icon:'⌨️', desc:'뜻을 보고 <b>영단어 스펠링을 입력</b>해요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
+      mixed:   { icon:'🔀', desc:'문제마다 <b>객관식 또는 주관식</b>이 랜덤으로 나와요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
+      ox:      { icon:'⭕', desc:'단어와 뜻을 <b>같이</b> 보여줘요.<br/><b>아는 단어면 ○(→)</b>, <b>모르는 단어면 ✕(←)</b>를 골라요.<br/>키보드 <b>좌우 화살표</b>로도 선택할 수 있고, 한 단어당 <b>한 번만</b> 물어봐요.' },
+    };
+    const tip = tips[cfg.mode] || tips.mixed;
+    app.innerHTML = `
+      <div class="flex min-h-[70dvh] flex-col items-center justify-center text-center anim-in">
+        <div class="mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-brand-500 text-4xl shadow-soft floaty">${tip.icon}</div>
+        <p class="text-xs font-black tracking-widest text-brand-400">시험 안내</p>
+        <h1 class="text-xl font-extrabold">이렇게 진행돼요</h1>
+        <div class="mt-5 max-w-xs rounded-2xl bg-white px-5 py-4 text-sm leading-relaxed text-slate-600 shadow-sm sm:max-w-sm">${tip.desc}</div>
+        ${cfg.goal? `<p class="mt-3 text-xs font-bold text-amber-500">🎯 목표 점수 ${cfg.goal}%에 도달할 때까지 재도전해요!</p>`:''}
+        <button id="tut-start" class="btn3d mt-7 w-full max-w-xs bg-grass-500 py-4 text-lg text-white" style="--btn-edge:#15803d">테스트 시작 🚀</button>
+      </div>`;
+    $('#tut-start').onclick=()=> startQuiz(studentName);
   }
 
   /* ----- 퀴즈 엔진 ----- */
@@ -1862,6 +1900,10 @@ function initStudentApp(sessionKey, payload){
       return { id:i, en:w.en, ko:w.ko, type };
     });
 
+    // 이 브라우저 탭에서 같은 링크로 몇 번째 도전인지 (새로고침해도 유지, 탭을 닫으면 초기화)
+    const tryNum = (parseInt(sessionStorage.getItem(attemptKey)||'0',10) || 0) + 1;
+    sessionStorage.setItem(attemptKey, String(tryNum));
+
     const state = {
       name: studentName,
       total: questions.length,
@@ -1870,6 +1912,7 @@ function initStudentApp(sessionKey, payload){
       wrongSet: new Set(),            // 오답노트 (id)
       mastered: new Set(),
       attempts: 0,
+      tryNum,
       start: Date.now(),
     };
 
@@ -1901,6 +1944,22 @@ function initStudentApp(sessionKey, payload){
           ${options.map((o,i)=>`<button data-opt="${esc(o)}" class="btn3d bg-white py-4 text-left px-5 text-base font-bold text-slate-700" style="--btn-edge:#e2e8f0">
             <span class="mr-2 text-brand-400">${String.fromCharCode(65+i)}.</span>${esc(o)}</button>`).join('')}
         </div>`;
+    } else if(q.type==='ox'){
+      body = `
+        <div class="mb-6 text-center">
+          <p class="mb-2 text-sm font-bold text-slate-400">이 단어를 알고 있나요?</p>
+          <div class="rounded-3xl bg-white px-6 py-8 shadow-card">
+            <div class="text-3xl font-black">${esc(q.en)}</div>
+            <div class="mt-2 text-xl font-bold text-brand-600">${esc(q.ko)}</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <button data-ox="x" class="btn3d bg-white py-6 text-center text-slate-700" style="--btn-edge:#e2e8f0">
+            <div class="text-3xl font-black text-coral-500">✕</div><div class="mt-1 text-sm font-bold text-slate-400">몰라요</div></button>
+          <button data-ox="o" class="btn3d bg-white py-6 text-center text-slate-700" style="--btn-edge:#e2e8f0">
+            <div class="text-3xl font-black text-grass-600">○</div><div class="mt-1 text-sm font-bold text-slate-400">알아요</div></button>
+        </div>
+        <p class="mt-3 text-center text-[11px] text-slate-300">← 몰라요 · 알아요 → (키보드 화살표로도 선택 가능)</p>`;
     } else {
       body = `
         <div class="mb-6 text-center">
@@ -1919,12 +1978,22 @@ function initStudentApp(sessionKey, payload){
           <div class="progressbar h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100"><i style="width:${progress}%"></i></div>
           <div class="text-xs font-black text-brand-500">${state.mastered.size}/${state.total}</div>
         </header>
-        ${remain>1 ? `<div class="mb-3 text-center text-[11px] font-bold text-slate-300">남은 문제 ${remain}개 · 틀리면 다시 나와요</div>`:''}
+        ${remain>1 && q.type!=='ox' ? `<div class="mb-3 text-center text-[11px] font-bold text-slate-300">남은 문제 ${remain}개 · 틀리면 다시 나와요</div>`:''}
         ${body}
       </div>`;
 
     if(q.type==='mc'){
       app.querySelectorAll('[data-opt]').forEach(b=> b.onclick=()=> answer(state,q, b.dataset.opt===q.ko, b));
+    } else if(q.type==='ox'){
+      let settled = false;
+      const keyHandler = (e)=>{
+        if(settled) return;
+        if(e.key==='ArrowRight'){ settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,true,null); }
+        else if(e.key==='ArrowLeft'){ settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,false,null); }
+      };
+      document.addEventListener('keydown', keyHandler);
+      app.querySelector('[data-ox="o"]').onclick=()=>{ if(settled) return; settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,true,null); };
+      app.querySelector('[data-ox="x"]').onclick=()=>{ if(settled) return; settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,false,null); };
     } else {
       const inp=$('#sp-input'); inp.focus();
       const submit=()=>{
@@ -1942,6 +2011,16 @@ function initStudentApp(sessionKey, payload){
     state.attempts++;
     // 최초 시도 결과 기록
     if(!(q.id in state.firstResult)) state.firstResult[q.id] = correct;
+
+    if(q.type==='ox'){
+      // 자가진단: O/X 상관없이 한 번만 물어보고 다음으로 (다시 묻지 않음), 모르는 단어만 오답노트에 기록
+      beep(correct);
+      if(!correct) state.wrongSet.add(q.id);
+      state.queue.shift();
+      state.mastered.add(q.id);
+      nextQuestion(state);
+      return;
+    }
 
     if(correct){
       beep(true);
@@ -2050,6 +2129,9 @@ function initStudentApp(sessionKey, payload){
 
     if(pct>=60) confetti();
 
+    const goalMet = !cfg.goal || pct>=cfg.goal;
+    const pushRetry = !!(cfg.goal && !goalMet);       // 목표 미달성 → 재시험을 더 적극적으로 안내
+
     const report =
 `📚 영단어 테스트 결과
 👤 이름: ${state.name}
@@ -2059,10 +2141,10 @@ function initStudentApp(sessionKey, payload){
 ⏱️ 완주 시간: ${timeStr}${wrongWords.length? `\n📝 오답 단어: ${wrongWords.join(', ')}`:'\n✨ 오답 없음!'}
 — VocaTest`;
 
-    const qtype = ({mc:'객관식',spelling:'주관식',mixed:'혼합'})[cfg.mode] || cfg.mode;
+    const qtype = ({mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode] || cfg.mode;
     const result = { name: state.name, score: `${firstCorrect}/${state.total} (${pct}%)`,
                      timeStr, attempts: state.attempts, wrong: wrongWords, date: dateStr, report,
-                     range: cfg.rng||'', count: cfg.cnt||'', qtype };
+                     range: cfg.rng||'', count: cfg.cnt||'', qtype, attempt: `${state.tryNum}회차` };
     const autoSend = !!cfg.dm;
 
     app.innerHTML = `
@@ -2078,7 +2160,13 @@ function initStudentApp(sessionKey, payload){
             <div class="text-xs font-bold text-slate-400">최초 점수</div>
             <div class="mt-1 text-5xl font-black text-slate-800">${firstCorrect}<span class="text-2xl text-slate-300">/${state.total}</span></div>
             <div class="mt-1 text-sm font-black ${grade.c}">${pct}점</div>
+            <div class="mt-1 text-xs font-bold text-slate-400">총 ${state.total}개 중 ${firstCorrect}개 정답 · ${pct}점</div>
           </div>
+
+          ${cfg.goal? (goalMet
+            ? `<div class="mb-4 rounded-2xl bg-grass-50 p-3 text-center text-sm font-black text-grass-600">🎯 목표 점수 ${cfg.goal}% 달성! 축하해요 🎉</div>`
+            : `<div class="mb-4 rounded-2xl bg-coral-50 p-3 text-center text-sm font-black text-coral-600">🎯 목표 점수 ${cfg.goal}%에 아직 도달하지 못했어요 (지금 ${pct}%) — 다시 도전해봐요!</div>`
+          ) : ''}
 
           <div class="grid grid-cols-2 gap-2 text-center">
             <div class="rounded-2xl bg-brand-50 py-3">
@@ -2106,7 +2194,7 @@ function initStudentApp(sessionKey, payload){
           ${autoSend? `<div id="r-send" class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">📡 선생님께 결과 전송 중…</div>`
                      : `<button id="r-copy" class="btn3d bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">📋 결과 복사해서 선생님께 보내기</button>`}
           <div id="r-copy-fallback"></div>
-          <button id="r-again" class="btn3d py-3.5 ${autoSend?'bg-grass-500 text-white':'bg-white text-slate-600'}" style="--btn-edge:${autoSend?'#15803d':'#e2e8f0'}">재시험 보기 🔄</button>
+          <button id="r-again" class="btn3d py-3.5 ${(autoSend||pushRetry)?'bg-grass-500 text-white':'bg-white text-slate-600'}" style="--btn-edge:${(autoSend||pushRetry)?'#15803d':'#e2e8f0'}">${pushRetry? '다시 도전하기 🔥' : '재시험 보기 🔄'}</button>
         </div>
         ${!autoSend? `<p class="mt-4 text-center text-[11px] text-slate-400">위 카드를 캡처해서 보내도 좋아요 📸</p>`:''}
       </div>`;

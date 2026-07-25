@@ -780,7 +780,7 @@ function renderWords(root){
             <button data-sel="${w.id}" title="선택" class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black transition ${sel?'bg-brand-500 text-white':'bg-brand-50 text-brand-500'}">${sel?'✓':(i+1)}</button>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
-                <div class="truncate font-extrabold">${esc(w.en)}</div>
+                <div data-editen="${w.id}" class="cursor-text truncate font-extrabold">${esc(w.en)}<span class="ml-1 text-slate-300">✎</span></div>
                 ${dup? `<span class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-black text-amber-600">중복</span>`:''}
               </div>
               <div data-editko="${w.id}" class="cursor-text truncate text-sm ${empty?'font-bold text-coral-400':'text-slate-400'}">${empty?'⚠️ 뜻 없음 · 탭하여 입력':esc(w.ko)}<span class="ml-1 text-slate-300">✎</span></div>
@@ -1128,6 +1128,25 @@ function renderWords(root){
     cur.className='w-full rounded-lg border-2 border-brand-400 bg-white px-2 py-1 text-sm font-bold outline-none';
     el.replaceWith(cur); cur.focus();
     const save=()=>{ const l=DB.words(); const t=l.find(x=>x.id===id); if(t) t.ko=cur.value.trim(); DB.saveWords(l); renderWords(root); };
+    cur.addEventListener('keydown',ev=>{ if(ev.key==='Enter') save(); });
+    cur.addEventListener('blur', save);
+  });
+
+  // 영단어 스펠링 인라인 수정 (뜻과 동일한 방식, 단 빈 값은 허용 안 함)
+  root.querySelectorAll('[data-editen]').forEach(el=> el.onclick=(e)=>{
+    if(e.ctrlKey||e.metaKey||e.shiftKey) return;
+    const id=el.dataset.editen; const list=DB.words(); const w=list.find(x=>x.id===id);
+    const cur = document.createElement('input');
+    cur.value = w.en||''; cur.placeholder='영단어 입력';
+    cur.className='w-full rounded-lg border-2 border-brand-400 bg-white px-2 py-1 text-sm font-extrabold outline-none';
+    el.replaceWith(cur); cur.focus(); cur.select();
+    let done=false;
+    const save=()=>{
+      if(done) return; done=true;
+      const val=cur.value.trim();
+      if(!val){ toast('영단어는 비워둘 수 없어요','bad'); renderWords(root); return; }
+      const l=DB.words(); const t=l.find(x=>x.id===id); if(t) t.en=val; DB.saveWords(l); renderWords(root);
+    };
     cur.addEventListener('keydown',ev=>{ if(ev.key==='Enter') save(); });
     cur.addEventListener('blur', save);
   });

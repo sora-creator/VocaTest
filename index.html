@@ -229,6 +229,7 @@ function b64dec(str){
 // 이 값은 링크의 만료일/단어를 학생이 임의로 바꾸지 못하게 막는 열쇠입니다.
 // 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
 const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
+const STORE_URL_LIMIT = 7000; // 구글 Apps Script/GFE가 실제로는 이보다 긴 GET 요청을 종종 거부함 — 단어 수가 많은 테스트(특히 OX처럼 4개 미만 제한이 없는 모드)는 짧은 링크 저장 요청 자체가 이 길이를 넘을 수 있음
 function fnv1a(str){ // 결정적 32bit 해시 → base36
   let h = 0x811c9dc5;
   for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -1459,6 +1460,10 @@ function renderMake(root){
         shortArea.innerHTML = `<div class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
         const signed = signPayload(payload);
         const storeUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+        if(storeUrl.length > STORE_URL_LIMIT){
+          shortArea.innerHTML = `<div class="rounded-xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ 단어 수가 많아 짧은 링크를 만들 수 없어요 (긴 링크는 그대로 사용 가능해요) — 출제 개수를 줄이면 짧은 링크도 만들 수 있어요.</div>`;
+          return;
+        }
         const res = await jsonpFetch(storeUrl);
         if(res==='ok'){
           const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv);
@@ -1573,6 +1578,10 @@ function renderMake(root){
         area.innerHTML = `<div class="rounded-xl bg-slate-50 py-2 text-center text-xs font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
         const signed = signPayload(r.payload);
         const storeUrl = r.dv + '?action=store&key=' + encodeURIComponent(r.key) + '&token=' + encodeURIComponent(r.dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+        if(storeUrl.length > STORE_URL_LIMIT){
+          area.innerHTML = `<div class="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">⚠️ 단어 수가 많아 짧은 링크를 만들 수 없어요 (긴 링크는 그대로 사용 가능해요)</div>`;
+          return;
+        }
         const res = await jsonpFetch(storeUrl);
         if(res==='ok'){
           const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv);

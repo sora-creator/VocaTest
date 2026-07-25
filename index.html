@@ -100,6 +100,10 @@ const DB = {
   saveSessions(s){ localStorage.setItem('vpang.sessions', JSON.stringify(s)); },
 };
 
+// 뜻 자동 번역 사용 여부 — 기본 꺼짐(직접 입력), 선생님이 켤 때만 영어만 입력 시 자동 번역 시도
+function getAutoTranslate(){ return localStorage.getItem('vpang.autoTranslate')==='1'; }
+function setAutoTranslate(v){ localStorage.setItem('vpang.autoTranslate', v?'1':'0'); }
+
 /* ---------- 유틸 ---------- */
 const $ = (sel, el=document) => el.querySelector(sel);
 const app = document.getElementById('app');
@@ -560,7 +564,7 @@ function TeacherApp(){
 // "apple 사과", "apple, 사과", "apple 사과 run 달리다" 등을 영어/한글 자동 구분해 (en,ko)로 매칭
 function parsePairs(raw){
   const isKo = c => /[\uAC00-\uD7A3\u3131-\u318E]/.test(c);
-  const isEn = c => /[A-Za-z0-9]/.test(c);
+  const isEn = c => /[A-Za-z]/.test(c);   // digits are not treated as an English signal, so numbers mixed into a meaning attach to the meaning side like any other character
   const rawTokens = raw.split(/[,;\n\r\t]+/).map(s=>s.trim()).filter(Boolean);
   const frags=[];
   rawTokens.forEach((tok, tokIdx)=>{
@@ -639,6 +643,7 @@ document.addEventListener('keydown', (e)=>{
 function renderWords(root){
   const allWords = DB.words();
   const folders = DB.folders();
+  const autoTx = getAutoTranslate();
 
   // 삭제된 폴더 참조 정리
   const folderIds = new Set(folders.map(f=>f.id));
@@ -721,7 +726,11 @@ function renderWords(root){
 
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">단어 추가</h2>
-      <p class="mb-3 text-xs leading-relaxed text-slate-400">${curFolder? `<b>'${esc(crumbs[crumbs.length-1].name)}'</b> 폴더에 추가돼요. `:''}<b>영단어와 뜻을 한 줄에</b> 적어주세요. 콤마·띄어쓰기 아무거나 OK — 영어·한글을 자동으로 구분해 매칭해요. <b>영어만</b> 쓰면 뜻은 자동으로 채워집니다.</p>
+      <p class="mb-3 text-xs leading-relaxed text-slate-400">${curFolder? `<b>'${esc(crumbs[crumbs.length-1].name)}'</b> 폴더에 추가돼요. `:''}<b>영단어와 뜻을 한 줄에</b> 적어주세요. 콤마·띄어쓰기 아무거나 OK — 영어·한글을 자동으로 구분해 매칭해요.</p>
+      <label class="mb-3 flex items-center gap-2 text-xs font-bold text-slate-500">
+        <input id="w-autotx" type="checkbox" ${autoTx?'checked':''} class="h-4 w-4 accent-brand-500" />
+        🌐 영어만 입력하면 뜻 자동 번역 (꺼두면 뜻을 직접 입력해야 해요)
+      </label>
       <div class="flex flex-col gap-2">
         <input id="w-entry" placeholder="예: apple 사과   또는   apple, 사과" class="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
         <button id="w-add" class="btn3d bg-brand-500 py-3.5 text-white" style="--btn-edge:#4338ca">＋ 단어 추가</button>
@@ -776,22 +785,25 @@ function renderWords(root){
   `;
 
   const entryEl=$('#w-entry'), addBtn=$('#w-add');
+  $('#w-autotx').onchange=(e)=>{ setAutoTranslate(e.target.checked); };
 
-  // 파싱 → 뜻 없는 항목만 자동 번역 → 저장 (현재 폴더에 추가)
+  // 파싱 → (자동 번역 켜져 있으면) 뜻 없는 항목만 자동 번역 → 저장 (현재 폴더에 추가)
   async function addEntries(raw, btn){
     const pairs = parsePairs(raw);
     if(!pairs.length){ toast('인식된 단어가 없어요','bad'); return; }
-    const needTx = pairs.filter(p=>!p.ko).length;
+    const autoOn = getAutoTranslate();
+    const needTx = autoOn ? pairs.filter(p=>!p.ko).length : 0;
     btn.disabled=true;
-    const list=DB.words(); let txDone=0, failed=0;
+    const list=DB.words(); let txDone=0, noKo=0;
     for(const p of pairs){
       let ko=p.ko;
-      if(!ko){ txDone++; btn.textContent=`🔎 뜻 자동 채우는 중… (${txDone}/${needTx})`; ko = await translateWord(p.en) || ''; if(!ko) failed++; }
+      if(!ko && autoOn){ txDone++; btn.textContent=`🔎 뜻 자동 채우는 중… (${txDone}/${needTx})`; ko = await translateWord(p.en) || ''; }
+      if(!ko) noKo++;
       list.push({id:uid(8), en:p.en, ko, folderId:curFolder});
     }
     selWords.clear(); selAnchor=null;
     DB.saveWords(list); renderWords(root);
-    if(failed) toast(`${pairs.length}개 추가 · ${failed}개는 뜻 확인 필요`,'bad');
+    if(noKo) toast(`${pairs.length}개 추가 · ${noKo}개는 뜻 확인 필요`,'bad');
     else toast(`${pairs.length}개 추가했어요 ✅`);
   }
 
@@ -825,22 +837,24 @@ function renderWords(root){
     const groups = parseFolderBulk(raw);
     if(!groups.length){ toast('폴더 이름 앞에 #을 붙여주세요 (예: #1과)','bad'); return; }
     btn.disabled=true;
+    const autoOn = getAutoTranslate();
     const folders=DB.folders(); const words=DB.words();
-    let totalWords=0, totalFolders=0, failed=0;
+    let totalWords=0, totalFolders=0, noKo=0;
     for(const g of groups){
       let folder = folders.find(f=>(f.parentId||null)===(curFolder||null) && f.name===g.name);
       if(!folder){ folder = { id:uid(8), name:g.name, parentId:curFolder }; folders.push(folder); totalFolders++; }
       const pairs = parsePairs(g.lines.join('\n'));
       for(const p of pairs){
         let ko=p.ko;
-        if(!ko){ btn.textContent=`🔎 [${g.name}] 뜻 자동 채우는 중…`; ko = await translateWord(p.en) || ''; if(!ko) failed++; }
+        if(!ko && autoOn){ btn.textContent=`🔎 [${g.name}] 뜻 자동 채우는 중…`; ko = await translateWord(p.en) || ''; }
+        if(!ko) noKo++;
         words.push({ id:uid(8), en:p.en, ko, folderId:folder.id });
         totalWords++;
       }
     }
     DB.saveFolders(folders); DB.saveWords(words);
     btn.disabled=false; btn.textContent='폴더별로 한꺼번에 만들기';
-    toast(`폴더 ${totalFolders}개, 단어 ${totalWords}개 추가했어요${failed?` (뜻 확인 필요 ${failed}개)`:''} ✅`);
+    toast(`폴더 ${totalFolders}개, 단어 ${totalWords}개 추가했어요${noKo?` (뜻 확인 필요 ${noKo}개)`:''} ✅`);
     renderWords(root);
   }
   $('#w-bulkfolder-add').onclick=async()=>{ const raw=$('#w-bulkfolder').value.trim(); if(raw) await addFolderBulk(raw, $('#w-bulkfolder-add')); };

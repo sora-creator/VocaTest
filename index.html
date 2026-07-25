@@ -658,6 +658,8 @@ function renderWords(root){
 
   const words = wordsInFolder(allWords, folders, curFolder, false); // 현재 폴더 직속 단어만
   const emptyCount = words.filter(w=>!w.ko || !w.ko.trim()).length;
+  const dupGroups = findDuplicateGroups(words); // 이 폴더 안에서 영단어(대소문자 무시)가 겹치는 단어들
+  const dupIds = new Set(dupGroups.flat().map(w=>w.id));
   const treeRows = visibleFolderRows(folders, treeExpanded);
 
   root.innerHTML = `
@@ -756,6 +758,7 @@ function renderWords(root){
       </div>
       ${words.length? `<p class="mb-2 px-1 text-[11px] text-slate-400">번호를 탭하면 선택 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>`:''}
       ${emptyCount? `<div class="mb-2 rounded-xl bg-coral-50 px-3 py-2 text-[11px] font-semibold text-coral-600">⚠️ 뜻이 비어있는 단어 ${emptyCount}개 — 탭해서 채워주세요 (테스트에서 제외됩니다)</div>`:''}
+      ${dupGroups.length? `<div class="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-600">🔁 중복된 단어 ${dupGroups.length}종류(${dupIds.size}개) — 아래 <b>중복</b> 표시된 단어를 확인하거나 "🧹 중복 정리"로 한번에 합쳐보세요</div>`:''}
 
       ${selWords.size? `
       <div class="sticky top-2 z-20 mb-2 flex items-center gap-1.5 rounded-2xl bg-brand-500 p-2 pl-4 text-white shadow-soft anim-slide">
@@ -769,13 +772,18 @@ function renderWords(root){
       <div class="flex flex-col gap-2">
         ${words.length? words.map((w,i)=>{
           const empty = !w.ko || !w.ko.trim();
+          const dup = dupIds.has(w.id);
           const sel = selWords.has(w.id);
+          const ring = sel?'ring-2 ring-brand-400':empty?'ring-1 ring-coral-200':dup?'ring-1 ring-amber-300':'';
           return `
-          <div data-row="${w.id}" class="anim-pop flex select-none items-center gap-3 rounded-2xl p-3 pr-2 shadow-sm transition ${sel?'bg-brand-50 ring-2 ring-brand-400':empty?'bg-white ring-1 ring-coral-200':'bg-white'}">
+          <div data-row="${w.id}" class="anim-pop flex select-none items-center gap-3 rounded-2xl bg-white p-3 pr-2 shadow-sm transition ${sel?'bg-brand-50':''} ${ring}">
             <button data-sel="${w.id}" title="선택" class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black transition ${sel?'bg-brand-500 text-white':'bg-brand-50 text-brand-500'}">${sel?'✓':(i+1)}</button>
             <div class="min-w-0 flex-1">
-              <div class="truncate font-extrabold">${esc(w.en)}</div>
-              <div data-editko="${w.id}" class="cursor-text truncate text-sm ${empty?'font-bold text-coral-400':'text-slate-400'}">${empty?'뜻 없음 · 탭하여 입력':esc(w.ko)}<span class="ml-1 text-slate-300">✎</span></div>
+              <div class="flex items-center gap-1.5">
+                <div class="truncate font-extrabold">${esc(w.en)}</div>
+                ${dup? `<span class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-black text-amber-600">중복</span>`:''}
+              </div>
+              <div data-editko="${w.id}" class="cursor-text truncate text-sm ${empty?'font-bold text-coral-400':'text-slate-400'}">${empty?'⚠️ 뜻 없음 · 탭하여 입력':esc(w.ko)}<span class="ml-1 text-slate-300">✎</span></div>
             </div>
             <button data-del="${w.id}" class="grid h-9 w-9 place-items-center rounded-xl text-slate-300 hover:bg-coral-50 hover:text-coral-500">✕</button>
           </div>`;}).join('')

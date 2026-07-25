@@ -1162,7 +1162,9 @@ function renderMake(root){
   if(!makeCfg.folderIds || makeCfg.folderIds.length<2) makeCfg.perFolder = false;
   const scoped = wordsInFolders(DB.words(), folders, makeCfg.folderIds, true);
   const validWords = scoped.filter(w=>w.ko && w.ko.trim());
-  const excluded = scoped.length - validWords.length;
+  const emptyWords = scoped.filter(w=>!w.ko || !w.ko.trim());
+  const excluded = emptyWords.length;
+  const folderNameOf = fid => { const p = folderPath(folders, fid); return p.length? p.map(f=>f.name).join(' › ') : '전체'; };
   const folderLabel = (()=>{
     if(!makeCfg.folderIds || !makeCfg.folderIds.length) return '전체 단어장';
     // 상위폴더 › 하위폴더 형식(폴더 자체가 최상위면 그냥 자기 이름만)
@@ -1194,7 +1196,15 @@ function renderMake(root){
   root.innerHTML = `
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
-      <p class="mb-4 text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
+      <p class="${excluded?'mb-1':'mb-4'} text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
+      ${excluded? `
+      <details class="mb-4">
+        <summary class="cursor-pointer text-xs font-bold text-coral-500">뜻 없는 단어 보기 (${excluded}개)</summary>
+        <div class="mt-2 flex flex-wrap gap-1.5">
+          ${emptyWords.map(w=>`<span class="rounded-full bg-coral-50 px-2.5 py-1 text-[11px] font-bold text-coral-600">${esc(w.en)} <span class="text-coral-400">· ${esc(folderNameOf(w.folderId))}</span></span>`).join('')}
+        </div>
+        <p class="mt-1.5 text-[11px] text-slate-400">단어장 탭에서 뜻을 채우면 다음 테스트부터 포함돼요.</p>
+      </details>`:''}
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">📁 출제 범위</label>
       <button id="t-folder" class="mb-4 flex w-full items-center justify-between rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 text-left font-bold outline-none focus:border-brand-400">

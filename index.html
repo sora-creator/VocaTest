@@ -229,7 +229,6 @@ function b64dec(str){
 // 이 값은 링크의 만료일/단어를 학생이 임의로 바꾸지 못하게 막는 열쇠입니다.
 // 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
 const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
-const STORE_URL_LIMIT = 7000; // 구글 Apps Script/GFE가 실제로는 이보다 긴 GET 요청을 종종 거부함 — 단어 수가 많은 테스트(특히 OX처럼 4개 미만 제한이 없는 모드)는 짧은 링크 저장 요청 자체가 이 길이를 넘을 수 있음
 function fnv1a(str){ // 결정적 32bit 해시 → base36
   let h = 0x811c9dc5;
   for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -316,6 +315,21 @@ function jsonpFetch(url, timeoutMs=10000){
   });
 }
 
+// 짧은 링크용 payload 저장. GET 대신 POST를 써서 단어 수가 많아도(URL 길이 제한 없이) 저장 가능하게 함.
+// POST는 no-cors라 저장 성공 여부를 응답으로 못 읽으므로, 곧바로 짧은 조회(키만 담긴 짧은 GET)로 실제 반영됐는지 확인함(반영 지연 대비 약간의 지연을 두고 몇 차례 재시도).
+async function storeShortLinkPayload(dv, dt, key, signed){
+  try{
+    await fetch(dv, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
+                      body: JSON.stringify({ action:'store', key, token:dt||'', payload: signed }) });
+  }catch(e){}
+  let stored = null;
+  for(let i=0; i<4 && !stored; i++){
+    if(i>0) await new Promise(r=>setTimeout(r, 700));
+    stored = await jsonpFetch(dv + '?action=fetch&key=' + encodeURIComponent(key));
+  }
+  return !!stored;
+}
+
 // 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
 function askConfirm(msg, okLabel='삭제'){
   return new Promise(resolve=>{
@@ -397,34 +411,55 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
     const rootCnt = words.length;
     let sel = new Set();
     let anchor = null;
+    let previewId = null; // 넓은 화면에서 옆에 미리보기로 보여줄 폴더(가장 최근에 클릭한 대상) — null이면 "전체 단어장"
     const ov=document.createElement('div');
     ov.className='fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 p-4 sm:items-center anim-in';
     document.body.appendChild(ov);
     const done=(v)=>{ ov.remove(); resolve(v); };
     function render(){
       const prevScroll = ov.querySelector('[data-scroll-area]')?.scrollTop || 0; // 선택할 때마다 다시 그려도 목록이 맨 위로 안 튀도록 유지
-      ov.innerHTML=`<div class="flex max-h-[75vh] w-full max-w-xs flex-col overflow-hidden rounded-3xl bg-white shadow-card">
-        <div class="shrink-0 px-5 pb-2 pt-5">
-          <p class="mb-1 text-center text-sm font-black text-slate-700">${esc(title)}</p>
-          <p class="text-center text-[11px] text-slate-400"><b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
-        </div>
-        <div data-scroll-area class="min-h-0 flex-1 overflow-y-auto px-5">
-          <div class="flex flex-col gap-1.5 pb-3">
-            <button data-pick-all class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${sel.size===0?'bg-brand-50 text-brand-700':'text-slate-600 hover:bg-slate-50'}">📚 전체 단어장 <span class="text-xs font-normal text-slate-400">(${rootCnt})</span></button>
-            ${tree.map(f=>{
-              const cnt = wordsInFolder(words, folders, f.id, true).length;
-              const isSel = sel.has(f.id);
-              return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
-            }).join('')}
+      const previewFolder = previewId ? folders.find(f=>f.id===previewId) : null;
+      const previewWords = previewFolder ? wordsInFolder(words, folders, previewId, true) : words;
+      ov.innerHTML=`<div class="flex max-h-[75vh] w-full max-w-xs flex-col overflow-hidden rounded-3xl bg-white shadow-card lg:max-w-3xl lg:flex-row">
+        <div class="flex min-h-0 flex-1 flex-col">
+          <div class="shrink-0 px-5 pb-2 pt-5">
+            <p class="mb-1 text-center text-sm font-black text-slate-700">${esc(title)}</p>
+            <p class="text-center text-[11px] text-slate-400"><b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
+          </div>
+          <div data-scroll-area class="min-h-0 flex-1 overflow-y-auto px-5">
+            <div class="flex flex-col gap-1.5 pb-3">
+              <button data-pick-all class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${sel.size===0?'bg-brand-50 text-brand-700':'text-slate-600 hover:bg-slate-50'}">📚 전체 단어장 <span class="text-xs font-normal text-slate-400">(${rootCnt})</span></button>
+              ${tree.map(f=>{
+                const cnt = wordsInFolder(words, folders, f.id, true).length;
+                const isSel = sel.has(f.id);
+                return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="shrink-0 grid grid-cols-2 gap-2 border-t border-slate-100 p-4">
+            <button id="pkm-cancel" class="btn3d bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
+            <button id="pkm-ok" class="btn3d bg-brand-500 py-3 text-sm font-bold text-white" style="--btn-edge:#4338ca">선택 완료${sel.size?` (${sel.size})`:''}</button>
           </div>
         </div>
-        <div class="shrink-0 grid grid-cols-2 gap-2 border-t border-slate-100 p-4">
-          <button id="pkm-cancel" class="btn3d bg-slate-100 py-3 text-sm font-bold text-slate-500" style="--btn-edge:#e2e8f0">취소</button>
-          <button id="pkm-ok" class="btn3d bg-brand-500 py-3 text-sm font-bold text-white" style="--btn-edge:#4338ca">선택 완료${sel.size?` (${sel.size})`:''}</button>
+        <div class="hidden min-h-0 w-72 shrink-0 flex-col border-slate-100 lg:flex lg:border-l">
+          <div class="shrink-0 px-4 pb-2 pt-5">
+            <p class="truncate text-xs font-black text-brand-600">📄 ${previewFolder? esc(previewFolder.name) : '📚 전체 단어장'} · ${previewWords.length}개</p>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            <div class="flex flex-col gap-1.5">
+              ${previewWords.length? previewWords.map(w=>{
+                const wEmpty = !w.ko || !w.ko.trim();
+                return `<div class="rounded-xl bg-slate-50 px-3 py-2">
+                  <div class="truncate text-xs font-extrabold">${esc(w.en)}</div>
+                  <div class="truncate text-[11px] ${wEmpty?'font-bold text-coral-400':'text-slate-400'}">${wEmpty?'⚠️ 뜻 없음':esc(w.ko)}</div>
+                </div>`;
+              }).join('') : `<p class="text-xs text-slate-300">이 폴더엔 단어가 없어요.</p>`}
+            </div>
+          </div>
         </div>
       </div>`;
       const scrollArea = ov.querySelector('[data-scroll-area]'); if(scrollArea) scrollArea.scrollTop = prevScroll;
-      ov.querySelector('[data-pick-all]').onclick=()=>{ sel=new Set(); anchor=null; render(); };
+      ov.querySelector('[data-pick-all]').onclick=()=>{ sel=new Set(); anchor=null; previewId=null; render(); };
       ov.querySelectorAll('[data-pick]').forEach(b=>{
         b.onclick=(e)=>{
           const id=b.dataset.pick;
@@ -437,6 +472,7 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
           } else {
             sel = new Set([id]); anchor=id;
           }
+          previewId = id;
           render();
         };
       });
@@ -663,7 +699,16 @@ function renderWords(root){
   const dupIds = new Set(dupGroups.flat().map(w=>w.id));
   const treeRows = visibleFolderRows(folders, treeExpanded);
 
+  // 폴더를 하나만 선택했을 때 넓은 화면(lg+)에서 옆 미리보기 패널에 그 폴더 단어를 바로 보여줌
+  const previewFolderId = treeSel.size===1 ? [...treeSel][0] : null;
+  const previewFolder = previewFolderId ? folders.find(f=>f.id===previewFolderId) : null;
+  const previewWords = previewFolderId ? wordsInFolder(allWords, folders, previewFolderId, true) : [];
+
   root.innerHTML = `
+    <div class="lg:ml-[calc(50%-50vw)] lg:mr-[calc(50%-50vw)] lg:w-screen">
+    <div class="lg:mx-auto lg:max-w-5xl lg:px-4">
+    <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-6">
+    <div class="lg:min-w-0">
     <div class="mb-3 flex items-center justify-between gap-2">
       <div class="flex flex-wrap items-center gap-1 text-xs font-bold">
         <button data-crumb="" class="rounded-lg px-2 py-1 ${curFolder===null?'bg-brand-100 text-brand-600':'text-slate-400 hover:bg-slate-100'}">📚 전체</button>
@@ -791,6 +836,27 @@ function renderWords(root){
         : `<div class="rounded-2xl border-2 border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">${curFolder?'이 폴더에 단어가 없어요.':'아직 단어가 없어요.'}<br/>위에서 첫 단어를 추가해 보세요! ✏️</div>`}
       </div>
     </section>
+    </div>
+    <div class="hidden lg:sticky lg:top-4 lg:block">
+      <section class="rounded-3xl bg-white p-5 shadow-card">
+        <h2 class="mb-3 text-sm font-extrabold text-slate-600">📄 미리보기</h2>
+        ${previewFolder? `
+          <p class="mb-2 truncate text-xs font-bold text-brand-600">📁 ${esc(previewFolder.name)} · ${previewWords.length}개</p>
+          <div class="flex max-h-[65vh] flex-col gap-1.5 overflow-y-auto pr-1">
+            ${previewWords.length? previewWords.map(w=>{
+              const wEmpty = !w.ko || !w.ko.trim();
+              return `<div class="rounded-xl bg-slate-50 px-3 py-2">
+                <div class="truncate text-xs font-extrabold">${esc(w.en)}</div>
+                <div class="truncate text-[11px] ${wEmpty?'font-bold text-coral-400':'text-slate-400'}">${wEmpty?'⚠️ 뜻 없음':esc(w.ko)}</div>
+              </div>`;
+            }).join('') : `<p class="text-xs text-slate-300">이 폴더엔 단어가 없어요.</p>`}
+          </div>
+        ` : `<p class="text-xs leading-relaxed text-slate-400">폴더를 하나 선택(클릭)하면 여기서 스크롤 없이 바로 단어를 확인할 수 있어요.</p>`}
+      </section>
+    </div>
+    </div>
+    </div>
+    </div>
   `;
 
   const entryEl=$('#w-entry'), addBtn=$('#w-add');
@@ -1213,22 +1279,10 @@ function renderMake(root){
   const previewCount = effectiveN ?? validWords.length;
   const enough = previewCount>=4;
 
-  // 짧은 링크 자동 생성이 가능할지 미리 대략 가늠(정확한 값은 실제 만들기 시점에 뽑히는 단어에 따라 조금 달라질 수 있음)
-  const dcPreview = deliveryCfg();
-  let shortLinkTooLong = false;
-  if(dcPreview.mode==='hook' && dcPreview.url){
-    const sampleWords = validWords.slice(0, previewCount).map(w=>({e:w.en,k:w.ko}));
-    const roughPayload = { v:1, s:'x'.repeat(12), n:'', sn:'', mode:makeCfg.mode, sec:makeCfg.studySec, goal:0, exp:Date.now(),
-                            dm:'hook', dv:dcPreview.url, dt:dcPreview.token, rng:folderLabel, cnt:'', w:sampleWords, g:'xxxxxxx' };
-    const roughUrl = dcPreview.url + '?action=store&key=' + 'x'.repeat(12) + '&token=' + encodeURIComponent(dcPreview.token) + '&payload=' + encodeURIComponent(JSON.stringify(roughPayload));
-    shortLinkTooLong = roughUrl.length > STORE_URL_LIMIT;
-  }
-
   root.innerHTML = `
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
       <p class="${excluded?'mb-1':'mb-4'} text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
-      ${shortLinkTooLong? `<p class="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-600">⚠️ 지금 개수(${previewCount}개)로는 짧은 링크가 자동으로 안 만들어질 수 있어요 — 긴 링크는 항상 정상 작동해요. 짧은 링크가 필요하면 "출제 개수"를 줄여보세요.</p>`:''}
       ${excluded? `
       <details class="mb-4">
         <summary class="cursor-pointer text-xs font-bold text-coral-500">뜻 없는 단어 보기 (${excluded}개)</summary>
@@ -1471,13 +1525,8 @@ function renderMake(root){
       async function attemptShorten(){
         shortArea.innerHTML = `<div class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
         const signed = signPayload(payload);
-        const storeUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
-        if(storeUrl.length > STORE_URL_LIMIT){
-          shortArea.innerHTML = `<div class="rounded-xl bg-amber-50 px-4 py-3 text-xs font-bold text-amber-700">⚠️ 단어 수가 많아 짧은 링크를 만들 수 없어요 (긴 링크는 그대로 사용 가능해요) — 출제 개수를 줄이면 짧은 링크도 만들 수 있어요.</div>`;
-          return;
-        }
-        const res = await jsonpFetch(storeUrl);
-        if(res==='ok'){
+        const ok = await storeShortLinkPayload(dv, dt, key, signed);
+        if(ok){
           const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv);
           const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           shortArea.innerHTML = `
@@ -1589,13 +1638,8 @@ function renderMake(root){
       async function attemptShorten(){
         area.innerHTML = `<div class="rounded-xl bg-slate-50 py-2 text-center text-xs font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
         const signed = signPayload(r.payload);
-        const storeUrl = r.dv + '?action=store&key=' + encodeURIComponent(r.key) + '&token=' + encodeURIComponent(r.dt) + '&payload=' + encodeURIComponent(JSON.stringify(signed));
-        if(storeUrl.length > STORE_URL_LIMIT){
-          area.innerHTML = `<div class="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-700">⚠️ 단어 수가 많아 짧은 링크를 만들 수 없어요 (긴 링크는 그대로 사용 가능해요)</div>`;
-          return;
-        }
-        const res = await jsonpFetch(storeUrl);
-        if(res==='ok'){
+        const ok = await storeShortLinkPayload(r.dv, r.dt, r.key, signed);
+        if(ok){
           const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv);
           const list=DB.sessions(); const s=list.find(x=>x.key===r.key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           area.innerHTML = `
@@ -1673,9 +1717,8 @@ function renderSessions(root){
     const key=b.dataset.makeShort; const s=DB.sessions().find(x=>x.key===key); if(!s || !s.dv) return;
     b.disabled=true; b.textContent='만드는 중…';
     const signed = signPayload({ v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: s.snapshot||[] });
-    const storeUrl = s.dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(s.dt||'') + '&payload=' + encodeURIComponent(JSON.stringify(signed));
-    const res = await jsonpFetch(storeUrl);
-    if(res==='ok'){
+    const ok = await storeShortLinkPayload(s.dv, s.dt||'', key, signed);
+    if(ok){
       const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv);
       const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
       toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
@@ -1746,10 +1789,23 @@ function renderResultsTab(root){
   const dc = deliveryCfg();
   const useHook = dc.mode==='hook';
   const guideCode =
-`function doPost(e){                                // 학생이 결과를 보낼 때(POST)
+`function doPost(e){                                // 학생 결과 전송 또는 짧은 링크 저장(POST — 둘 다 토큰 필요)
   var d = JSON.parse(e.postData.contents);
   if(d.token !== '${dc.token}'){                    // 비밀 토큰 확인
     return ContentService.createTextOutput('no');
+  }
+  if(d.action === 'store'){                          // 짧은 링크용 단어 데이터 저장 (POST라 GET과 달리 길이 제한 없음)
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName('VocaTestLinks');
+    if(!sh){ sh = ss.insertSheet('VocaTestLinks'); sh.appendRow(['key','payload','저장시각']); }
+    var rows = sh.getDataRange().getValues();
+    var payloadText = JSON.stringify(d.payload);
+    var found = false;
+    for(var i=1;i<rows.length;i++){
+      if(rows[i][0] === d.key){ sh.getRange(i+1,2).setValue(payloadText); sh.getRange(i+1,3).setValue(new Date()); found = true; break; }
+    }
+    if(!found) sh.appendRow([d.key, payloadText, new Date()]);
+    return ContentService.createTextOutput('ok');
   }
   var s = SpreadsheetApp.getActiveSheet();
   var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도','아는단어(OX)'];
@@ -1761,7 +1817,7 @@ function renderResultsTab(root){
   return ContentService.createTextOutput('ok');
 }
 
-function doGet(e){                                  // 짧은 링크 저장/조회(GET, 선택 기능)
+function doGet(e){                                  // 짧은 링크 조회 등(GET, 선택 기능)
   var cb = e.parameter.callback || 'callback';
   var out = function(body){
     return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
@@ -1771,16 +1827,6 @@ function doGet(e){                                  // 짧은 링크 저장/조�
   if(!sh){ sh = ss.insertSheet('VocaTestLinks'); sh.appendRow(['key','payload','저장시각']); }
   var key = e.parameter.key;
 
-  if(e.parameter.action === 'store'){                // 테스트 만들 때: 단어 데이터를 시트에 저장 (토큰 필요)
-    if(e.parameter.token !== '${dc.token}') return out('null');
-    var rows = sh.getDataRange().getValues();
-    var found = false;
-    for(var i=1;i<rows.length;i++){
-      if(rows[i][0] === key){ sh.getRange(i+1,2).setValue(e.parameter.payload); sh.getRange(i+1,3).setValue(new Date()); found = true; break; }
-    }
-    if(!found) sh.appendRow([key, e.parameter.payload, new Date()]);
-    return out('"ok"');
-  }
   if(e.parameter.action === 'fetch'){                // 학생이 링크 열 때: 세션 키만으로 조회 (키 자체가 이미 추측 불가능한 무작위값이라 토큰 불필요 → 링크가 더 짧아짐)
     var rows2 = sh.getDataRange().getValues();
     for(var j=1;j<rows2.length;j++){

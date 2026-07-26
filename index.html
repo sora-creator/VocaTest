@@ -1213,10 +1213,22 @@ function renderMake(root){
   const previewCount = effectiveN ?? validWords.length;
   const enough = previewCount>=4;
 
+  // 짧은 링크 자동 생성이 가능할지 미리 대략 가늠(정확한 값은 실제 만들기 시점에 뽑히는 단어에 따라 조금 달라질 수 있음)
+  const dcPreview = deliveryCfg();
+  let shortLinkTooLong = false;
+  if(dcPreview.mode==='hook' && dcPreview.url){
+    const sampleWords = validWords.slice(0, previewCount).map(w=>({e:w.en,k:w.ko}));
+    const roughPayload = { v:1, s:'x'.repeat(12), n:'', sn:'', mode:makeCfg.mode, sec:makeCfg.studySec, goal:0, exp:Date.now(),
+                            dm:'hook', dv:dcPreview.url, dt:dcPreview.token, rng:folderLabel, cnt:'', w:sampleWords, g:'xxxxxxx' };
+    const roughUrl = dcPreview.url + '?action=store&key=' + 'x'.repeat(12) + '&token=' + encodeURIComponent(dcPreview.token) + '&payload=' + encodeURIComponent(JSON.stringify(roughPayload));
+    shortLinkTooLong = roughUrl.length > STORE_URL_LIMIT;
+  }
+
   root.innerHTML = `
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
       <p class="${excluded?'mb-1':'mb-4'} text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
+      ${shortLinkTooLong? `<p class="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-600">⚠️ 지금 개수(${previewCount}개)로는 짧은 링크가 자동으로 안 만들어질 수 있어요 — 긴 링크는 항상 정상 작동해요. 짧은 링크가 필요하면 "출제 개수"를 줄여보세요.</p>`:''}
       ${excluded? `
       <details class="mb-4">
         <summary class="cursor-pointer text-xs font-bold text-coral-500">뜻 없는 단어 보기 (${excluded}개)</summary>

@@ -1237,6 +1237,55 @@ function renderWords(root){
 
 /* ---------- 탭: 테스트 만들기 ---------- */
 let makeCfg = { mode:'mc', studySec:10, expDays:7, folderIds:null, sampleMode:'all', sampleCount:'', samplePercent:'', perFolder:false, testLabel:'', studentName:'', goalScore:'', reviewKind:'wrong' };
+
+/* ---------- 재시험(OX자가진단 재시험 / 오답 재시험) 미리보기 캐시 ----------
+   학생·폴더·(OX재시험이면) X/O 선택이 바뀔 때마다 구글시트를 다시 조회해서
+   "지금 조건으로 몇 개나 나올지" 미리 보여주기 위한 캐시. sig가 같으면 재조회 안 함. */
+let retestCache = { sig:null, loading:false, matched:null, error:null };
+
+function retestSig(kind){
+  return JSON.stringify({ s: makeCfg.studentName.trim(), f: makeCfg.folderIds, k: kind });
+}
+
+// 최근 5개 결과에서 오답/아는단어를 모아 현재 출제범위(폴더)로 좁힌 단어 목록을 반환 (기존 doGet action=recent 그대로 사용)
+async function fetchRetestMatches(kind){
+  const name = makeCfg.studentName.trim();
+  const dc = deliveryCfg();
+  if(!name) return { matched:[], error:'학생 이름을 먼저 입력하세요' };
+  if(dc.mode!=='hook' || !dc.url) return { matched:[], error:'결과 탭에서 구글시트 URL을 먼저 저장하세요' };
+  const url = dc.url + '?action=recent&name=' + encodeURIComponent(name) + '&kind=' + kind + '&token=' + encodeURIComponent(dc.token);
+  const res = await jsonpFetch(url);
+  if(!res || !Array.isArray(res) || !res.length) return { matched:[], error:null };
+  const bank = DB.words();
+  // 위에서 고른 출제 범위(폴더)가 있으면 그 범위 안의 단어로만 좁힘
+  const scopedIds = (makeCfg.folderIds && makeCfg.folderIds.length)
+    ? new Set(wordsInFolders(bank, DB.folders(), makeCfg.folderIds, true).map(w=>w.id))
+    : null;
+  const seen = new Set();
+  const matched = [];
+  res.forEach(tok=>{
+    const m = String(tok).match(/^(.*?)\s*\((.*)\)$/);
+    const en = (m? m[1] : tok).trim();
+    if(!en || seen.has(en.toLowerCase())) return;
+    const w = bank.find(x=> x.en && x.en.trim().toLowerCase()===en.toLowerCase() && x.ko && x.ko.trim());
+    if(w && (!scopedIds || scopedIds.has(w.id))){ seen.add(en.toLowerCase()); matched.push(w); }
+  });
+  return { matched, error:null };
+}
+
+// renderMake 안에서 재시험 모드일 때 호출 — 조건이 바뀌었으면 비동기로 다시 조회하고
+// 끝나면 renderMake를 다시 불러 개수를 화면에 반영
+function ensureRetestPreview(root, kind){
+  const sig = retestSig(kind);
+  if(retestCache.sig===sig || retestCache.loading) return;
+  if(!makeCfg.studentName.trim()){ retestCache = { sig, loading:false, matched:null, error:null }; return; }
+  retestCache = { sig, loading:true, matched:null, error:null };
+  fetchRetestMatches(kind).then(r=>{
+    if(retestSig(kind)!==sig) return; // 조회 중에 조건이 바뀌었으면 결과 버림
+    retestCache = { sig, loading:false, matched:r.matched, error:r.error };
+    renderMake(root);
+  });
+}
 const EXP_OPTIONS = [ {d:1,t:'1일'}, {d:3,t:'3일'}, {d:7,t:'7일'}, {d:30,t:'30일'}, {d:0,t:'무제한'} ];
 
 function renderMake(root){
@@ -1279,11 +1328,20 @@ function renderMake(root){
   const previewCount = effectiveN ?? validWords.length;
   const enough = previewCount>=4;
 
+  // 재시험 모드(OX자가진단 재시험 / 오답 재시험)일 때는 "폴더 전체 단어" 대신
+  // "학생의 최근 기록에서 찾은 단어"가 소스가 됨 — 그래서 미리보기/경고 문구를 따로 계산
+  const isRetest = makeCfg.mode==='ox_retest' || makeCfg.mode==='wrong_retest';
+  const retestKind = makeCfg.mode==='wrong_retest' ? 'wrong' : makeCfg.reviewKind;
+  if(isRetest) ensureRetestPreview(root, retestKind);
+  const retestCount = retestCache.matched ? retestCache.matched.length : 0;
+  const retestEnough = !isRetest || retestCount>=4;
+
   root.innerHTML = `
     <section class="anim-slide rounded-3xl bg-white p-5 shadow-card">
       <h2 class="mb-1 text-base font-extrabold">테스트 만들기</h2>
-      <p class="${excluded?'mb-1':'mb-4'} text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>
-      ${excluded? `
+      ${!isRetest? `
+      <p class="${excluded?'mb-1':'mb-4'} text-xs text-slate-400">사용할 단어 <b class="text-brand-500">${previewCount}</b>개로 링크를 만듭니다.${excluded?` <span class="text-coral-500">(뜻 없는 ${excluded}개 제외)</span>`:''}${makeCfg.sampleMode!=='all'?` <span class="text-slate-400">(전체 ${validWords.length}개 중 무작위 추출)</span>`:''}</p>`:''}
+      ${!isRetest && excluded? `
       <details class="mb-4">
         <summary class="cursor-pointer text-xs font-bold text-coral-500">뜻 없는 단어 보기 (${excluded}개)</summary>
         <div class="mt-2 flex flex-wrap gap-1.5">
@@ -1297,7 +1355,7 @@ function renderMake(root){
         <span class="truncate">${esc(folderLabel)}</span><span class="shrink-0 text-xs text-slate-400">변경 ›</span>
       </button>
 
-      ${makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `
+      ${!isRetest && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `
       <label class="mb-4 flex items-center gap-2 rounded-xl bg-brand-50 px-4 py-3 text-xs font-bold text-brand-700 ring-1 ring-brand-100">
         <input id="t-perfolder" type="checkbox" ${makeCfg.perFolder?'checked':''} class="h-4 w-4 accent-brand-500" />
         선택한 ${makeCfg.folderIds.length}개 폴더로 <b>각각</b> 테스트 링크 만들기 (폴더당 1개씩)
@@ -1321,16 +1379,7 @@ function renderMake(root){
       <input id="t-name" value="${esc(makeCfg.testLabel)}" placeholder="예: 3월 데일리 테스트" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
 
       <label class="mb-1 block text-xs font-bold text-slate-500">👤 학생 이름 (선택)</label>
-      <input id="t-student" value="${esc(makeCfg.studentName)}" placeholder="예: 김민준 — 미리 적으면 학생이 이름을 안 적어도 돼요" class="mb-2 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
-      ${makeCfg.studentName && makeCfg.studentName.trim() ? `
-      <div class="mb-1.5 grid grid-cols-2 gap-2">
-        <button data-reviewkind="wrong" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='wrong'?'border-coral-400 bg-coral-50 text-coral-600':'border-slate-100 bg-white text-slate-400'}">✕ 모르는 단어(오답)</button>
-        <button data-reviewkind="known" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='known'?'border-grass-400 bg-grass-50 text-grass-700':'border-slate-100 bg-white text-slate-400'}">○ 아는 단어(OX)</button>
-      </div>
-      <button id="t-review" type="button" class="mb-1 w-full rounded-xl border-2 border-dashed border-grass-300 bg-grass-50 px-4 py-2.5 text-left text-xs font-bold text-grass-700">
-        🔁 <b>${esc(makeCfg.studentName.trim())}</b>님이 ${makeCfg.reviewKind==='known'?'<b>아는(O)</b>':'<b>모르는(X)</b>'} 단어로 복습 링크 만들기
-      </button>
-      <p class="mb-4 text-[11px] leading-relaxed text-slate-400">위 <b>출제 범위</b>·아래 <b>출제 개수·문제 유형</b> 설정이 그대로 적용돼요 (범위를 정하면 그 범위 안의 단어만, 개수를 지정하면 그만큼만 추립니다). "아는 단어(O)"는 <b>OX 자가진단</b> 테스트에서 ○로 답한 기록에서만 모아져요.</p>`:''}
+      <input id="t-student" value="${esc(makeCfg.studentName)}" placeholder="예: 김민준 — 재시험 모드에서는 이 학생의 기록을 찾는 데 쓰여요" class="mb-4 w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3 font-semibold outline-none focus:border-brand-400" />
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">문제 유형</label>
       <div class="mb-4 grid grid-cols-2 gap-2" id="t-mode">
@@ -1338,7 +1387,25 @@ function renderMake(root){
         ${modeCard('spelling','주관식','스펠링')}
         ${modeCard('mixed','혼합','랜덤')}
         ${modeCard('ox','OX 자가진단','안다/모른다')}
+        ${modeCard('ox_retest','OX자가진단 재시험','최근 O/X 기록')}
+        ${modeCard('wrong_retest','오답 재시험','최근 오답만')}
       </div>
+
+      ${makeCfg.mode==='ox_retest'? `
+      <div class="mb-1.5 grid grid-cols-2 gap-2">
+        <button data-reviewkind="wrong" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='wrong'?'border-coral-400 bg-coral-50 text-coral-600':'border-slate-100 bg-white text-slate-400'}">✕ 모르는 단어(X)</button>
+        <button data-reviewkind="known" type="button" class="rounded-xl border-2 py-2 text-xs font-bold transition ${makeCfg.reviewKind==='known'?'border-grass-400 bg-grass-50 text-grass-700':'border-slate-100 bg-white text-slate-400'}">○ 아는 단어(O)</button>
+      </div>
+      <p class="mb-3 text-[11px] leading-relaxed text-slate-400">"아는 단어(O)"는 <b>OX 자가진단</b> 테스트에서 ○로 답한 기록에서만 모아져요.</p>`:''}
+
+      ${isRetest? `
+      <div class="mb-4 rounded-xl border-2 border-dashed ${retestCache.loading?'border-slate-200 bg-slate-50':retestCount>0?'border-grass-300 bg-grass-50':'border-coral-200 bg-coral-50'} px-4 py-3 text-xs font-bold">
+        ${!makeCfg.studentName.trim()? `<span class="text-slate-500">👤 위에서 학생 이름을 먼저 입력하세요</span>`
+          : retestCache.loading? `<span class="text-slate-500">🔁 ${esc(makeCfg.studentName)}님의 최근 기록 불러오는 중…</span>`
+          : retestCache.error? `<span class="text-coral-600">⚠️ ${esc(retestCache.error)}</span>`
+          : retestCount>0? `<span class="text-grass-700">✅ ${esc(makeCfg.studentName)}님 · ${esc(folderLabel)} 기준으로 <b>${retestCount}개</b> 찾았어요</span>`
+          : `<span class="text-coral-600">😅 ${esc(makeCfg.studentName)}님의 이 범위 기록에서 찾은 단어가 없어요</span>`}
+      </div>`:''}
 
       <label class="mb-1.5 block text-xs font-bold text-slate-500">🎯 목표 점수 (선택) <span class="font-normal text-slate-400">— 도달할 때까지 재시험을 안내해요</span></label>
       <div class="mb-4 flex items-center gap-2">
@@ -1357,9 +1424,10 @@ function renderMake(root){
       <label class="mb-1.5 block text-xs font-bold text-slate-500">틀렸을 때 공부 시간: <span id="t-secval" class="text-brand-600">${makeCfg.studySec}초</span></label>
       <input id="t-sec" type="range" min="2" max="10" value="${makeCfg.studySec}" class="mb-5 w-full accent-brand-500" />
 
-      ${!enough && makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링·OX는 가능)</div>`:''}
+      ${!isRetest && !enough && makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링·OX는 가능)</div>`:''}
+      ${isRetest && makeCfg.mode==='wrong_retest' && !retestEnough && retestCount>0 ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">오답 재시험(객관식)은 단어가 4개 이상 필요해요. (지금 ${retestCount}개)</div>`:''}
 
-      <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">${makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `🔗 링크 ${makeCfg.folderIds.length}개 한번에 만들기` : '🔗 테스트 링크 만들기'}</button>
+      <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">${!isRetest && makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `🔗 링크 ${makeCfg.folderIds.length}개 한번에 만들기` : isRetest ? '🔗 재시험 링크 만들기' : '🔗 테스트 링크 만들기'}</button>
     </section>
 
     <div id="t-result"></div>
@@ -1378,73 +1446,6 @@ function renderMake(root){
   $('#t-student').addEventListener('input', e=>{ makeCfg.studentName = e.target.value; });
   $('#t-goal').addEventListener('input', e=>{ makeCfg.goalScore = e.target.value; });
   root.querySelectorAll('[data-reviewkind]').forEach(b=> b.onclick=()=>{ makeCfg.reviewKind=b.dataset.reviewkind; renderMake(root); });
-  const reviewBtn = $('#t-review');
-  if(reviewBtn) reviewBtn.onclick = async ()=>{
-    const name = makeCfg.studentName.trim();
-    const kind = makeCfg.reviewKind==='known' ? 'known' : 'wrong';
-    const kindLabel = kind==='known' ? '아는(O)' : '모르는(X)';
-    const dc = deliveryCfg();
-    if(dc.mode!=='hook' || !dc.url){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
-    reviewBtn.disabled = true; reviewBtn.textContent = `🔁 최근 ${kindLabel} 단어 불러오는 중…`;
-    const url = dc.url + '?action=recent&name=' + encodeURIComponent(name) + '&kind=' + kind + '&token=' + encodeURIComponent(dc.token);
-    const res = await jsonpFetch(url);
-    if(!res || !Array.isArray(res) || !res.length){
-      toast(`이 학생의 최근 ${kindLabel} 단어 기록을 찾을 수 없어요 (구글시트에 기록이 있는지, Apps Script를 최신 코드로 재배포했는지 확인해 주세요)`,'bad');
-      renderMake(root); return;
-    }
-    const bank = DB.words();
-    // 위에서 고른 출제 범위(폴더)가 있으면 그 범위 안의 단어로만 오답을 좁힘
-    const scopedIds = (makeCfg.folderIds && makeCfg.folderIds.length)
-      ? new Set(wordsInFolders(bank, DB.folders(), makeCfg.folderIds, true).map(w=>w.id))
-      : null;
-    const seen = new Set();
-    const matched = [];
-    res.forEach(tok=>{
-      const m = String(tok).match(/^(.*?)\s*\((.*)\)$/);
-      const en = (m? m[1] : tok).trim();
-      if(!en || seen.has(en.toLowerCase())) return;
-      const w = bank.find(x=> x.en && x.en.trim().toLowerCase()===en.toLowerCase() && x.ko && x.ko.trim());
-      if(w && (!scopedIds || scopedIds.has(w.id))){ seen.add(en.toLowerCase()); matched.push(w); }
-    });
-    if(!matched.length){
-      toast(scopedIds? `선택한 출제 범위 안에서는 이 학생의 최근 ${kindLabel} 단어를 찾을 수 없어요` : '단어장에서 일치하는 단어를 찾을 수 없어요 (삭제되었을 수 있어요)', 'bad');
-      renderMake(root); return;
-    }
-
-    // 위 출제 개수(전체/개수 지정/퍼센트 지정) 설정을 오답 단어 목록에도 동일하게 적용
-    let sampleN = matched.length;
-    if(makeCfg.sampleMode==='count'){
-      const n=parseInt(makeCfg.sampleCount,10);
-      if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); renderMake(root); return; }
-      sampleN = Math.min(n, matched.length);
-    } else if(makeCfg.sampleMode==='percent'){
-      const p=parseInt(makeCfg.samplePercent,10);
-      if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); renderMake(root); return; }
-      sampleN = Math.max(1, Math.round(matched.length*Math.min(p,100)/100));
-    }
-    const picked = shuffle(matched).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){
-      toast(`객관식·혼합은 뜻 있는 단어가 4개 이상 필요해요 (지금 ${picked.length}개 — 스펠링·OX를 선택하거나 범위를 넓혀보세요)`,'bad');
-      renderMake(root); return;
-    }
-
-    const key = uid(12);
-    const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
-    const reviewLabel = kind==='known' ? '아는 단어 복습' : '오답 복습';
-    const countLabel = `${picked.length}개(${reviewLabel}${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
-    const rngLabel = scopedIds ? `${name} ${reviewLabel} · ${folderLabel}` : `${name} ${reviewLabel}`;
-    const goal = parseInt(makeCfg.goalScore,10)||0;
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:name, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
-                      exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
-    const link = buildLink(payload);
-    const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:name, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length, goal,
-                       created:Date.now(), exp, dm:'hook', dv:dc.url, dt:dc.token, rng:rngLabel, cnt:countLabel, status:'active',
-                       snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
-    DB.saveSessions(sessions);
-    renderMultiResults([{ ok:true, label:rngLabel, link, key, payload, dm:'hook', dv:dc.url, dt:dc.token, count:picked.length, exp }]);
-    toast('복습 링크를 만들었어요 🔁');
-  };
   root.querySelectorAll('[data-samplemode]').forEach(b=> b.onclick=()=>{ makeCfg.sampleMode=b.dataset.samplemode; renderMake(root); });
   const scEl=$('#t-samplecount'); if(scEl) scEl.addEventListener('change',()=>{ makeCfg.sampleCount=scEl.value; renderMake(root); });
   const spEl=$('#t-samplepercent'); if(spEl) spEl.addEventListener('change',()=>{ makeCfg.samplePercent=spEl.value; renderMake(root); });
@@ -1453,28 +1454,64 @@ function renderMake(root){
     const dcCheck = deliveryCfg();
     if(dcCheck.mode==='hook' && !dcCheck.url){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
 
-    if(makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2){
+    if(!isRetest && makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2){
       const results = makeCfg.folderIds.map(fid=>buildOneLink(fid));
       renderMultiResults(results);
       toast('세션 발급 완료 🔑');
       return;
     }
 
-    const valid = wordsInFolders(DB.words(), DB.folders(), makeCfg.folderIds, true).filter(w=>w.ko && w.ko.trim());
-    if(valid.length<1){ toast('뜻이 있는 단어를 먼저 추가하세요','bad'); return; }
+    let picked, rngLabel, countLabel, forcedMode;
 
-    let sampleN = valid.length;
-    if(makeCfg.sampleMode==='count'){
-      const n=parseInt(makeCfg.sampleCount,10);
-      if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); return; }
-      sampleN = Math.min(n, valid.length);
-    } else if(makeCfg.sampleMode==='percent'){
-      const p=parseInt(makeCfg.samplePercent,10);
-      if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); return; }
-      sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
+    if(isRetest){
+      const sName = makeCfg.studentName.trim();
+      if(!sName){ toast('학생 이름을 먼저 입력하세요','bad'); return; }
+      const matched = retestCache.matched;
+      if(!matched || !matched.length){ toast('찾은 단어가 없어요. 조건을 확인해주세요','bad'); return; }
+
+      let sampleN = matched.length;
+      if(makeCfg.sampleMode==='count'){
+        const n=parseInt(makeCfg.sampleCount,10);
+        if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); return; }
+        sampleN = Math.min(n, matched.length);
+      } else if(makeCfg.sampleMode==='percent'){
+        const p=parseInt(makeCfg.samplePercent,10);
+        if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); return; }
+        sampleN = Math.max(1, Math.round(matched.length*Math.min(p,100)/100));
+      }
+      picked = shuffle(matched).slice(0, sampleN);
+      forcedMode = makeCfg.mode==='ox_retest' ? 'ox' : 'mc';
+      if(forcedMode==='mc' && picked.length<4){
+        toast(`오답 재시험(객관식)은 단어가 4개 이상 필요해요 (지금 ${picked.length}개)`,'bad');
+        return;
+      }
+      const reviewLabel = makeCfg.mode==='ox_retest'
+        ? (makeCfg.reviewKind==='known' ? 'OX자가진단 재시험(아는 단어)' : 'OX자가진단 재시험(모르는 단어)')
+        : '오답 재시험';
+      countLabel = `${picked.length}개(${reviewLabel}${picked.length!==matched.length? `, 전체 ${matched.length}개 중 추출`:''})`;
+      rngLabel = (makeCfg.folderIds && makeCfg.folderIds.length) ? `${sName} ${reviewLabel} · ${folderLabel}` : `${sName} ${reviewLabel}`;
+    } else {
+      const valid = wordsInFolders(DB.words(), DB.folders(), makeCfg.folderIds, true).filter(w=>w.ko && w.ko.trim());
+      if(valid.length<1){ toast('뜻이 있는 단어를 먼저 추가하세요','bad'); return; }
+
+      let sampleN = valid.length;
+      if(makeCfg.sampleMode==='count'){
+        const n=parseInt(makeCfg.sampleCount,10);
+        if(!n || n<1){ toast('출제할 개수를 입력하세요','bad'); return; }
+        sampleN = Math.min(n, valid.length);
+      } else if(makeCfg.sampleMode==='percent'){
+        const p=parseInt(makeCfg.samplePercent,10);
+        if(!p || p<1){ toast('출제할 퍼센트를 입력하세요','bad'); return; }
+        sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
+      }
+      picked = shuffle(valid).slice(0, sampleN);
+      if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
+      forcedMode = makeCfg.mode;
+      countLabel = makeCfg.sampleMode==='all' ? `${picked.length}개(전체)`
+                 : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
+                 : `${picked.length}개(전체 ${valid.length}개 중 ${makeCfg.samplePercent}%)`;
+      rngLabel = folderLabel;
     }
-    const picked = shuffle(valid).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
@@ -1483,19 +1520,15 @@ function renderMake(root){
     const dv = dm==='hook' ? (dc.url||'') : '';
     const dt = dm==='hook' ? (dc.token||'') : '';
     if(dm==='hook' && !dv){ toast('결과 탭에서 구글시트 URL을 먼저 저장하세요','bad'); return; }
-    // 결과 시트에 같이 남길 출제 정보(범위/개수) — 학생 쪽엔 폴더 구조가 없으므로 미리 문자열로 요약해 둠
-    const countLabel = makeCfg.sampleMode==='all' ? `${picked.length}개(전체)`
-                      : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
-                      : `${picked.length}개(전체 ${valid.length}개 중 ${makeCfg.samplePercent}%)`;
-    const studentName = $('#t-student').value.trim();
+    const studentName = isRetest ? makeCfg.studentName.trim() : $('#t-student').value.trim();
     const goal = parseInt(makeCfg.goalScore,10)||0;
-    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, goal,
-                      exp, dm, dv, dt, rng:folderLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
+    const payload = { v:1, s:key, n:$('#t-name').value.trim(), sn:studentName, mode:forcedMode, sec:makeCfg.studySec, goal,
+                      exp, dm, dv, dt, rng:rngLabel, cnt:countLabel, w: picked.map(w=>({e:w.en,k:w.ko})) };
     const link = buildLink(payload);
 
     const sessions=DB.sessions();
-    sessions.unshift({ key, name:payload.n, student:studentName, mode:makeCfg.mode, sec:makeCfg.studySec, count:picked.length, goal,
-                       created:Date.now(), exp, dm, dv, dt, rng:folderLabel, cnt:countLabel, status:'active',
+    sessions.unshift({ key, name:payload.n, student:studentName, mode:forcedMode, sec:makeCfg.studySec, count:picked.length, goal,
+                       created:Date.now(), exp, dm, dv, dt, rng:rngLabel, cnt:countLabel, status:'active',
                        snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
 
@@ -1892,7 +1925,11 @@ function doGet(e){                                  // 짧은 링크 조회 등(
           <pre class="mt-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[10px] leading-relaxed text-slate-100 no-scrollbar">${esc(guideCode)}</pre>
         </div>
 
-        <div class="mt-3 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">
+        <div class="mt-3 rounded-2xl bg-brand-50 p-3 text-[11px] leading-relaxed text-brand-700">
+          🔁 <b>나중에 코드를 업데이트할 때는 "새 배포"를 다시 누르지 말고</b>, Apps Script 화면 우측 상단 <b>배포 → 배포 관리 → (연필 아이콘) 편집 → 버전: 새 버전 → 배포</b>로 하세요. 이렇게 해야 <b>웹 앱 주소(/exec)가 그대로 유지</b>되어 이미 학생들에게 보낸 링크(특히 짧은 링크)가 안 깨져요. 만약 실수로 "새 배포"를 다시 눌러 새 주소가 생겨도 예전에 만든 링크 자체가 당장 끊기진 않지만(예전 배포는 계속 살아있음), 위 ① 웹훅 URL 칸을 새 주소로 바꿔야 앞으로 만드는 링크에 새 코드가 적용돼요.
+        </div>
+
+        <div class="mt-2 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">
           🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 모든 요청은 비밀 토큰이 맞을 때만 처리되고, 시트 전체나 구글 계정 자체에는 접근할 수 없습니다(정해진 딱 한 칸만 주고받음). "🔗 짧은 링크 만들기"를 쓰면 단어 데이터를 이 시트의 별도 탭(VocaTestLinks)에 저장해두고 짧은 키로 불러오는 방식이라 토큰이 없으면 조회도 안 돼요.
         </div>
         <div class="mt-2 rounded-2xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700">

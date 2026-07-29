@@ -1910,6 +1910,10 @@ function doGet(e){                                  // 짧은 링크 조회 등(
 
         <button id="d-save" class="btn3d w-full bg-brand-500 py-3 text-sm text-white" style="--btn-edge:#4338ca">저장</button>
 
+        <div class="mt-3 rounded-2xl bg-brand-50 p-3 text-[11px] leading-relaxed text-brand-700">
+          🔁 <b>나중에 코드를 업데이트할 때는 "새 배포"를 다시 누르지 말고</b>, Apps Script 화면 우측 상단 <b>배포 → 배포 관리 → (연필 아이콘) 편집 → 버전: 새 버전 → 배포</b>로 하세요. 이렇게 해야 <b>웹 앱 주소(/exec)가 그대로 유지</b>되어 이미 학생들에게 보낸 링크(특히 짧은 링크)가 안 깨져요. 만약 실수로 "새 배포"를 다시 눌러 새 주소가 생겨도 예전에 만든 링크 자체가 당장 끊기진 않지만(예전 배포는 계속 살아있음), 위 ① 웹훅 URL 칸을 새 주소로 바꿔야 앞으로 만드는 링크에 새 코드가 적용돼요.
+        </div>
+
         <div class="mt-4 rounded-2xl bg-slate-50 p-4">
           <p class="mb-2 text-xs font-bold text-slate-600">③ 구글시트 연결 방법</p>
           <ol class="list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-500">
@@ -1923,10 +1927,6 @@ function doGet(e){                                  // 짧은 링크 조회 등(
             <button id="d-copycode" class="rounded-lg bg-brand-500 px-3 py-1 text-[11px] font-bold text-white">코드 복사</button>
           </div>
           <pre class="mt-1.5 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[10px] leading-relaxed text-slate-100 no-scrollbar">${esc(guideCode)}</pre>
-        </div>
-
-        <div class="mt-3 rounded-2xl bg-brand-50 p-3 text-[11px] leading-relaxed text-brand-700">
-          🔁 <b>나중에 코드를 업데이트할 때는 "새 배포"를 다시 누르지 말고</b>, Apps Script 화면 우측 상단 <b>배포 → 배포 관리 → (연필 아이콘) 편집 → 버전: 새 버전 → 배포</b>로 하세요. 이렇게 해야 <b>웹 앱 주소(/exec)가 그대로 유지</b>되어 이미 학생들에게 보낸 링크(특히 짧은 링크)가 안 깨져요. 만약 실수로 "새 배포"를 다시 눌러 새 주소가 생겨도 예전에 만든 링크 자체가 당장 끊기진 않지만(예전 배포는 계속 살아있음), 위 ① 웹훅 URL 칸을 새 주소로 바꿔야 앞으로 만드는 링크에 새 코드가 적용돼요.
         </div>
 
         <div class="mt-2 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">

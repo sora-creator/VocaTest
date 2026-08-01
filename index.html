@@ -1710,6 +1710,8 @@ function renderMake(root){
   }
 }
 
+let extendOpenKey = null; // 세션 관리에서 '만료일 연장' 패널이 펼쳐진 세션 key
+
 /* ---------- 탭: 세션 관리 ---------- */
 function renderSessions(root){
   const sessions = DB.sessions();
@@ -1760,6 +1762,25 @@ function renderSessions(root){
       toast('짧은 링크 저장에 실패했어요','bad');
     }
   });
+  root.querySelectorAll('[data-extend]').forEach(b=> b.onclick=()=>{
+    extendOpenKey = extendOpenKey===b.dataset.extend ? null : b.dataset.extend;
+    renderSessions(root);
+  });
+  root.querySelectorAll('[data-extend-opt]').forEach(b=> b.onclick=async()=>{
+    const [key, days] = b.dataset.extendOpt.split(':');
+    const list=DB.sessions(); const s=list.find(x=>x.key===key); if(!s) return;
+    s.exp = (+days>0) ? Date.now()+(+days)*86400000 : 0;
+    if(s.status==='expired') s.status='active';
+    DB.saveSessions(list);
+    if(s.shortLink && s.dm==='hook'){
+      b.disabled=true; b.textContent='적용 중…';
+      const signed = signPayload({ v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, goal:s.goal||0, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: s.snapshot||[] });
+      await storeShortLinkPayload(s.dv, s.dt||'', key, signed);
+    }
+    extendOpenKey = null;
+    toast('만료일을 연장했어요 🔓');
+    renderSessions(root);
+  });
   const clr=$('#s-clear'); if(clr) clr.onclick=()=>{ DB.saveSessions(DB.sessions().filter(s=>s.status==='active')); renderSessions(root); };
 
   function sessionCard(s){
@@ -1793,9 +1814,19 @@ function renderSessions(root){
           <div class="mt-0.5 text-xs text-slate-400">${modeTxt} · ${s.count}단어 · ${date}</div>
           ${s.student? `<div class="mt-0.5 text-[11px] font-bold text-grass-600">👤 ${esc(s.student)}</div>`:''}
           ${s.goal? `<div class="mt-0.5 text-[11px] font-bold text-amber-500">🎯 목표 ${s.goal}%</div>`:''}
-          <div class="mt-0.5 text-[11px] font-bold ${timeExpired?'text-slate-400':'text-brand-500'}">🔒 ${expLine}</div>
+          <div class="mt-0.5 flex items-center gap-1.5">
+            <span class="text-[11px] font-bold ${timeExpired?'text-slate-400':'text-brand-500'}">🔒 ${expLine}</span>
+            <button data-extend="${s.key}" class="text-[11px] font-bold text-brand-500 underline decoration-dotted">연장</button>
+          </div>
         </div>
       </div>
+      ${extendOpenKey===s.key? `
+      <div class="mt-2 rounded-xl bg-brand-50 p-2.5">
+        <p class="mb-1.5 text-[10px] font-bold text-brand-600">오늘부터 새 만료일로 변경</p>
+        <div class="grid grid-cols-5 gap-1">
+          ${EXP_OPTIONS.map(o=>`<button data-extend-opt="${s.key}:${o.d}" class="rounded-lg bg-white py-1.5 text-[10px] font-bold text-brand-600 shadow-sm">${o.t}</button>`).join('')}
+        </div>
+      </div>` : ''}
       <div class="mt-3 grid grid-cols-3 gap-1.5">
         <button data-copy="${s.key}" class="rounded-lg bg-slate-100 py-2 text-xs font-bold text-slate-600">링크</button>
         <button data-expire="${s.key}" class="rounded-lg py-2 text-xs font-bold ${s.status==='active'?'bg-coral-50 text-coral-600':'bg-grass-50 text-grass-600'}">${s.status==='active'?'지금 만료':'재활성화'}</button>

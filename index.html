@@ -1458,6 +1458,9 @@ function renderMake(root){
       const results = makeCfg.folderIds.map(fid=>buildOneLink(fid));
       renderMultiResults(results);
       toast('세션 발급 완료 🔑');
+      makeCfg.testLabel=''; makeCfg.studentName='';
+      const nEl0=$('#t-name'); if(nEl0) nEl0.value='';
+      const sEl0=$('#t-student'); if(sEl0) sEl0.value='';
       return;
     }
 
@@ -1531,6 +1534,10 @@ function renderMake(root){
                        created:Date.now(), exp, dm, dv, dt, rng:rngLabel, cnt:countLabel, status:'active',
                        snapshot: picked.map(w=>({e:w.en,k:w.ko})) });
     DB.saveSessions(sessions);
+
+    makeCfg.testLabel=''; makeCfg.studentName='';
+    const nEl=$('#t-name'); if(nEl) nEl.value='';
+    const sEl=$('#t-student'); if(sEl) sEl.value='';
 
     const expText = exp ? `${new Date(exp).getFullYear()}. ${new Date(exp).getMonth()+1}. ${new Date(exp).getDate()}` : '무제한';
     const dText = dm==='hook' ? '📊 결과 → 구글시트 자동전송' : '📋 결과 수동 전송';

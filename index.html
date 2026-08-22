@@ -2211,7 +2211,7 @@ function initStudentApp(sessionKey, payload){
           <div class="progressbar h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100"><i style="width:${progress}%"></i></div>
           <div class="text-xs font-black text-brand-500">${state.mastered.size}/${state.total}</div>
         </header>
-        ${remain>1 && q.type!=='ox' ? `<div class="mb-3 text-center text-[11px] font-bold text-slate-300">남은 문제 ${remain}개 · 틀리면 다시 나와요</div>`:''}
+        ${remain>1 && q.type!=='ox' ? `<div class="mb-3 text-center text-[11px] font-bold text-slate-300">남은 문제 ${remain}개${q.type==='meaning'?'':' · 틀리면 다시 나와요'}</div>`:''}
         ${body}
       </div>`;
 
@@ -2277,6 +2277,13 @@ function initStudentApp(sessionKey, payload){
       state.queue.shift();
       state.mastered.add(q.id);
       showFeedback(true, q, ()=> nextQuestion(state), btnEl);
+    } else if(q.type==='meaning'){
+      beep(false);
+      state.wrongSet.add(q.id);
+      // 한글 뜻 쓰기는 오답이어도 정답을 공개하거나 다시 출제하지 않고 다음 문제로 이동
+      state.queue.shift();
+      state.mastered.add(q.id);
+      nextQuestion(state);
     } else {
       beep(false);
       state.wrongSet.add(q.id);

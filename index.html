@@ -1385,6 +1385,7 @@ function renderMake(root){
       <div class="mb-4 grid grid-cols-2 gap-2" id="t-mode">
         ${modeCard('mc','객관식','4지선다')}
         ${modeCard('spelling','주관식','스펠링')}
+        ${modeCard('meaning','주관식','한글 뜻 쓰기')}
         ${modeCard('mixed','혼합','랜덤')}
         ${modeCard('ox','OX 자가진단','안다/모른다')}
         ${modeCard('ox_retest','OX자가진단 재시험','최근 O/X 기록')}
@@ -1424,7 +1425,7 @@ function renderMake(root){
       <label class="mb-1.5 block text-xs font-bold text-slate-500">틀렸을 때 공부 시간: <span id="t-secval" class="text-brand-600">${makeCfg.studySec}초</span></label>
       <input id="t-sec" type="range" min="2" max="10" value="${makeCfg.studySec}" class="mb-5 w-full accent-brand-500" />
 
-      ${!isRetest && !enough && makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (스펠링·OX는 가능)</div>`:''}
+      ${!isRetest && !enough && !['spelling','meaning','ox'].includes(makeCfg.mode) ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">객관식·혼합은 뜻이 있는 단어가 4개 이상 필요해요. (주관식·OX는 가능)</div>`:''}
       ${isRetest && makeCfg.mode==='wrong_retest' && !retestEnough && retestCount>0 ? `<div class="mb-3 rounded-xl bg-coral-50 px-4 py-3 text-xs font-semibold text-coral-600">오답 재시험(객관식)은 단어가 4개 이상 필요해요. (지금 ${retestCount}개)</div>`:''}
 
       <button id="t-make" class="btn3d w-full bg-grass-500 py-4 text-white" style="--btn-edge:#15803d">${!isRetest && makeCfg.perFolder && makeCfg.folderIds && makeCfg.folderIds.length>=2 ? `🔗 링크 ${makeCfg.folderIds.length}개 한번에 만들기` : isRetest ? '🔗 재시험 링크 만들기' : '🔗 테스트 링크 만들기'}</button>
@@ -1508,7 +1509,7 @@ function renderMake(root){
         sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
       }
       picked = shuffle(valid).slice(0, sampleN);
-      if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
+      if(!['spelling','meaning','ox'].includes(makeCfg.mode) && picked.length<4){ toast('객관식은 뜻 있는 단어 4개 이상 필요해요','bad'); return; }
       forcedMode = makeCfg.mode;
       countLabel = makeCfg.sampleMode==='all' ? `${picked.length}개(전체)`
                  : makeCfg.sampleMode==='count' ? `${picked.length}개(전체 ${valid.length}개 중 지정)`
@@ -1607,7 +1608,7 @@ function renderMake(root){
       sampleN = Math.max(1, Math.round(valid.length*Math.min(p,100)/100));
     }
     const picked = shuffle(valid).slice(0, sampleN);
-    if(makeCfg.mode!=='spelling' && makeCfg.mode!=='ox' && picked.length<4) return { ok:false, label, reason:'객관식은 뜻 있는 단어 4개 이상 필요해요' };
+    if(!['spelling','meaning','ox'].includes(makeCfg.mode) && picked.length<4) return { ok:false, label, reason:'객관식은 뜻 있는 단어 4개 이상 필요해요' };
 
     const key = uid(12);
     const exp = makeCfg.expDays>0 ? Date.now() + makeCfg.expDays*86400000 : 0;
@@ -1807,7 +1808,7 @@ function renderSessions(root){
     const manualExpired = s.status==='expired';
     const timeExpired = s.exp && Date.now() > s.exp;
     const on = !manualExpired && !timeExpired;
-    const modeTxt = {mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'}[s.mode]||s.mode;
+    const modeTxt = {mc:'객관식',spelling:'주관식(스펠링)',meaning:'주관식(한글 뜻)',mixed:'혼합',ox:'OX 자가진단'}[s.mode]||s.mode;
     const d = new Date(s.created);
     const date = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 
@@ -1892,12 +1893,15 @@ function renderResultsTab(root){
     return ContentService.createTextOutput('ok');
   }
   var s = SpreadsheetApp.getActiveSheet();
-  var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도','아는단어(OX)'];
+  var headers = ['날짜','이름','출제범위','점수','완주시간','오답단어','출제개수','문제유형','시도','아는단어(OX)','진짜 정답','학생이 쓴 정답'];
   if(s.getLastRow() === 0){                         // 시트가 비어있으면 맨 위에 제목행 추가
     s.appendRow(headers);
+  } else {                                          // 예전 10열 형식 시트에도 비교용 두 열을 추가
+    s.getRange(1, 11, 1, 2).setValues([headers.slice(10)]);
   }
   s.appendRow([new Date(), d.name, d.range || '', d.score, d.timeStr, (d.wrong||[]).join(', '),
-               d.count || '', d.qtype || '', d.attempt || '1회차', (d.known||[]).join(', ')]);
+               d.count || '', d.qtype || '', d.attempt || '1회차', (d.known||[]).join(', '),
+               (d.correctAnswers||[]).join('\\n'), (d.studentAnswers||[]).join('\\n')]);
   return ContentService.createTextOutput('ok');
 }
 
@@ -2063,7 +2067,7 @@ function initStudentApp(sessionKey, payload){
         <p class="text-xs font-black tracking-widest text-brand-400">VOCATEST${cfg.rng? ` · ${esc(cfg.rng)}`:''}</p>
         <h1 class="text-2xl font-extrabold">영단어 테스트</h1>
         ${cfg.name? `<p class="mt-1 font-semibold text-brand-500">${esc(cfg.name)}</p>`:''}
-        <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode]}</p>
+        <p class="mt-1 text-sm text-slate-400">단어 ${words.length}개 · ${({mc:'객관식',spelling:'주관식(스펠링)',meaning:'주관식(한글 뜻)',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode]}</p>
         ${cfg.goal? `<p class="mt-1 text-xs font-bold text-amber-500">🎯 목표 점수 ${cfg.goal}% — 도달할 때까지 재도전해요!</p>`:''}
         <div class="mt-7 w-full max-w-xs">
           <input id="s-name" value="${esc(cfg.sn)}" placeholder="이름을 입력하세요" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-lg font-bold shadow-sm outline-none focus:border-brand-400" />
@@ -2091,6 +2095,7 @@ function initStudentApp(sessionKey, payload){
     const tips = {
       mc:      { icon:'🔤', desc:'영단어를 보고 <b>뜻 4개 중 정답</b>을 골라요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
       spelling:{ icon:'⌨️', desc:'뜻을 보고 <b>영단어 스펠링을 입력</b>해요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
+      meaning: { icon:'✍️', desc:'영단어를 보고 <b>한글 뜻을 직접 입력</b>해요.<br/>여러 뜻이 등록된 단어는 <b>그중 하나</b>만 맞아도 정답이에요.' },
       mixed:   { icon:'🔀', desc:'문제마다 <b>객관식 또는 주관식</b>이 랜덤으로 나와요.<br/>틀리면 정답을 잠깐 공부하고 <b>맞출 때까지 다시</b> 나와요.' },
       ox:      { icon:'⭕', desc:'단어와 뜻을 <b>같이</b> 보여줘요.<br/><b>아는 단어면 ○(→)</b>, <b>모르는 단어면 ✕(←)</b>를 골라요.<br/>키보드 <b>좌우 화살표</b>로도 선택할 수 있고, 한 단어당 <b>한 번만</b> 물어봐요.' },
     };
@@ -2123,8 +2128,10 @@ function initStudentApp(sessionKey, payload){
     const state = {
       name: studentName,
       total: questions.length,
+      questions,
       queue: shuffle(questions),      // 맞출 때까지 남는 큐
       firstResult: {},                // id -> 최초 정답 여부
+      firstAnswers: {},               // id -> 학생이 최초로 제출한 답
       wrongSet: new Set(),            // 오답노트 (id) — OX는 "모른다(X)"도 여기 들어감
       knownSet: new Set(),            // OX 전용: "안다(O)"로 답한 단어 (id)
       mastered: new Set(),
@@ -2177,7 +2184,7 @@ function initStudentApp(sessionKey, payload){
             <div class="text-3xl font-black text-grass-600">○</div><div class="mt-1 text-sm font-bold text-slate-400">알아요</div></button>
         </div>
         <p class="mt-3 text-center text-[11px] text-slate-300">← 몰라요 · 알아요 → (키보드 화살표로도 선택 가능)</p>`;
-    } else {
+    } else if(q.type==='spelling') {
       body = `
         <div class="mb-6 text-center">
           <p class="mb-2 text-sm font-bold text-slate-400">뜻에 맞는 영단어를 입력하세요</p>
@@ -2186,6 +2193,15 @@ function initStudentApp(sessionKey, payload){
         <input id="sp-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
           placeholder="영어 스펠링 입력" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-xl font-bold shadow-sm outline-none focus:border-brand-400" />
         <button id="sp-submit" class="btn3d mt-3 w-full bg-brand-500 py-4 text-white" style="--btn-edge:#4338ca">제출하기</button>`;
+    } else {
+      body = `
+        <div class="mb-6 text-center">
+          <p class="mb-2 text-sm font-bold text-slate-400">다음 영단어의 한글 뜻을 입력하세요</p>
+          <div class="rounded-3xl bg-white px-6 py-8 text-3xl font-black shadow-card">${esc(q.en)}</div>
+        </div>
+        <input id="meaning-input" autocomplete="off" autocorrect="off" spellcheck="false"
+          placeholder="한글 뜻 입력" class="w-full rounded-2xl border-2 border-slate-100 bg-white px-5 py-4 text-center text-xl font-bold shadow-sm outline-none focus:border-brand-400" />
+        <button id="meaning-submit" class="btn3d mt-3 w-full bg-brand-500 py-4 text-white" style="--btn-edge:#4338ca">제출하기</button>`;
     }
 
     app.innerHTML = `
@@ -2200,7 +2216,7 @@ function initStudentApp(sessionKey, payload){
       </div>`;
 
     if(q.type==='mc'){
-      app.querySelectorAll('[data-opt]').forEach(b=> b.onclick=()=> answer(state,q, b.dataset.opt===q.ko, b));
+      app.querySelectorAll('[data-opt]').forEach(b=> b.onclick=()=> answer(state,q, b.dataset.opt===q.ko, b, b.dataset.opt));
     } else if(q.type==='ox'){
       let settled = false;
       const keyHandler = (e)=>{
@@ -2211,23 +2227,39 @@ function initStudentApp(sessionKey, payload){
       document.addEventListener('keydown', keyHandler);
       app.querySelector('[data-ox="o"]').onclick=()=>{ if(settled) return; settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,true,null); };
       app.querySelector('[data-ox="x"]').onclick=()=>{ if(settled) return; settled=true; document.removeEventListener('keydown',keyHandler); answer(state,q,false,null); };
-    } else {
+    } else if(q.type==='spelling'){
       const inp=$('#sp-input'); inp.focus();
       const submit=()=>{
         const val=inp.value.trim();
         if(!val){ toast('스펠링을 입력하세요','bad'); return; }
         const ok = val.toLowerCase() === q.en.trim().toLowerCase();
-        answer(state,q,ok,null);
+        answer(state,q,ok,null,val);
       };
       $('#sp-submit').onclick=submit;
+      inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
+    } else {
+      const inp=$('#meaning-input'); inp.focus();
+      const normalizeKo = v=> String(v).toLowerCase().replace(/[\s\p{P}\p{S}]/gu,'');
+      const accepted = q.ko.split(/[,/·;]/).map(normalizeKo).filter(Boolean);
+      const submit=()=>{
+        const val=inp.value.trim();
+        if(!val){ toast('한글 뜻을 입력하세요','bad'); return; }
+        const normalized = normalizeKo(val);
+        const ok = accepted.includes(normalized) || normalizeKo(q.ko)===normalized;
+        answer(state,q,ok,null,val);
+      };
+      $('#meaning-submit').onclick=submit;
       inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
     }
   }
 
-  function answer(state, q, correct, btnEl){
+  function answer(state, q, correct, btnEl, studentAnswer){
     state.attempts++;
     // 최초 시도 결과 기록
-    if(!(q.id in state.firstResult)) state.firstResult[q.id] = correct;
+    if(!(q.id in state.firstResult)){
+      state.firstResult[q.id] = correct;
+      state.firstAnswers[q.id] = studentAnswer == null ? (q.type==='ox' ? (correct?'O':'X') : '') : String(studentAnswer);
+    }
 
     if(q.type==='ox'){
       // 자가진단: O/X 상관없이 한 번만 물어보고 다음으로 (다시 묻지 않음). 모르는 단어는 오답노트에, 아는 단어는 knownSet에 기록
@@ -2359,10 +2391,16 @@ function initStudentApp(sessionKey, payload){
 ⏱️ 완주 시간: ${timeStr}${wrongWords.length? `\n📝 오답 단어: ${wrongWords.join(', ')}`:'\n✨ 오답 없음!'}
 — VocaTest`;
 
-    const qtype = ({mc:'객관식',spelling:'주관식',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode] || cfg.mode;
+    const correctAnswers = state.questions.map((q,i)=> q.type==='spelling'
+      ? `${i+1}. ${q.ko} → ${q.en}`
+      : `${i+1}. ${q.en} → ${q.ko}`);
+    const studentAnswers = state.questions.map((q,i)=> q.type==='spelling'
+      ? `${i+1}. ${q.ko} → ${state.firstAnswers[q.id] || '(무응답)'}`
+      : `${i+1}. ${q.en} → ${state.firstAnswers[q.id] || '(무응답)'}`);
+    const qtype = ({mc:'객관식',spelling:'주관식(스펠링)',meaning:'주관식(한글 뜻)',mixed:'혼합',ox:'OX 자가진단'})[cfg.mode] || cfg.mode;
     const result = { name: state.name, score: `${firstCorrect}/${state.total} (${pct}%)`,
                      timeStr, attempts: state.attempts, wrong: wrongWords, known: cfg.mode==='ox'? knownWords : [], date: dateStr, report,
-                     range: cfg.rng||'', count: cfg.cnt||'', qtype, attempt: `${state.tryNum}회차` };
+                     range: cfg.rng||'', count: cfg.cnt||'', qtype, attempt: `${state.tryNum}회차`, correctAnswers, studentAnswers };
     const autoSend = !!cfg.dm;
 
     app.innerHTML = `

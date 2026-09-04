@@ -325,6 +325,16 @@ async function storeShortLinkPayload(dv, dt, key, signed){
     const legacyResult = await jsonpFetch(legacyUrl + '&_=' + Date.now());
     if(legacyResult==='ok') return true;
   }
+  // 큰 데이터는 URL 제한을 피하도록 base64 문자열을 여러 GET 요청으로 나눠 저장
+  const encoded = b64enc(signed);
+  const chunks = encoded.match(/.{1,1800}/g) || [];
+  let chunksStored = chunks.length>0;
+  for(let i=0; i<chunks.length && chunksStored; i++){
+    const chunkUrl = dv + '?action=storeChunk&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
+                     + '&part=' + i + '&total=' + chunks.length + '&chunk=' + encodeURIComponent(chunks[i]) + '&_=' + Date.now();
+    chunksStored = (await jsonpFetch(chunkUrl))==='ok';
+  }
+  if(chunksStored) return true;
   try{
     // Apps Script 리디렉션에서도 본문이 안정적으로 전달되도록 단순 폼 POST 사용
     const body = new URLSearchParams({ action:'store', key, token:dt||'', payload:JSON.stringify(signed) });
@@ -1952,10 +1962,31 @@ function doGet(e){                                  // 짧은 링크 조회 등(
     if(!found1) sh.appendRow([key, payloadText1, new Date()]);
     return out('"ok"');
   }
+  if(e.parameter.action === 'storeChunk'){           // 큰 데이터는 여러 칸에 나눠 저장해 URL·셀 길이 제한 회피
+    if(e.parameter.token !== '${dc.token}') return out('null');
+    var part = Number(e.parameter.part), total = Number(e.parameter.total);
+    if(part<0 || total<1 || part>=total) return out('null');
+    var rowsC = sh.getDataRange().getValues(), rowC = 0;
+    for(var c=1;c<rowsC.length;c++){ if(rowsC[c][0] === key){ rowC=c+1; break; } }
+    if(!rowC){ sh.appendRow([key, 'chunks:'+total, new Date()]); rowC=sh.getLastRow(); }
+    sh.getRange(rowC,2).setValue('chunks:'+total);
+    sh.getRange(rowC,3).setValue(new Date());
+    if(sh.getMaxColumns()<total+3) sh.insertColumnsAfter(sh.getMaxColumns(), total+3-sh.getMaxColumns());
+    sh.getRange(rowC,4+part).setValue(e.parameter.chunk || '');
+    return out('"ok"');
+  }
   if(e.parameter.action === 'fetch'){                // 학생이 링크 열 때: 세션 키만으로 조회 (키 자체가 이미 추측 불가능한 무작위값이라 토큰 불필요 → 링크가 더 짧아짐)
     var rows2 = sh.getDataRange().getValues();
     for(var j=1;j<rows2.length;j++){
-      if(rows2[j][0] === key) return out(rows2[j][1]);
+      if(rows2[j][0] === key){
+        var saved = String(rows2[j][1] || '');
+        if(saved.indexOf('chunks:') === 0){
+          var total2 = Number(saved.split(':')[1]);
+          var joined = sh.getRange(j+1,4,total2).getValues()[0].join('');
+          return joined ? out(JSON.stringify('b64:'+joined)) : out('null');
+        }
+        return out(saved);
+      }
     }
   }
   if(e.parameter.action === 'recent'){               // 복습 링크 만들 때: 학생 이름으로 최근 오답(또는 OX 아는 단어) 모아 조회 (토큰 필요)
@@ -2063,6 +2094,7 @@ function StudentApp(sessionKey, dataStr, remote){
     const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey)
                 + '&token=' + encodeURIComponent(remote.rt||'') + '&_=' + Date.now();
     jsonpFetch(url).then(payload=>{
+      if(typeof payload==='string' && payload.startsWith('b64:')) payload=b64dec(payload.slice(4));
       if(!payload){ return renderExpired('테스트 정보를 불러오지 못했어요. 인터넷 연결을 확인하거나 링크가 올바른지 확인해 주세요.'); }
       initStudentApp(sessionKey, payload);
     });

@@ -230,7 +230,7 @@ function b64dec(str){
 // 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
 const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
 // VocaTest 자체 단축 링크 저장/조회 전용 Apps Script 배포 주소 (교사용 결과 전송 URL과 별개)
-const SHORT_LINK_API = 'https://script.google.com/macros/s/AKfycbxmd3jv99Ad4OVkX5Ffi4Q7pRS8AiCZ_Lsk_eaHlxDYk9zWoEwnWkSy7eOp30UgbCCn/exec';
+const SHORT_LINK_API = 'https://script.google.com/macros/s/AKfycby0cAHs7my21Ub4A-4btCtzRX26yVL1fhc-puMzr1jOwhOPOHQlFv-QjtZmTdUIzu9G/exec';
 function fnv1a(str){ // 결정적 32bit 해시 → base36
   let h = 0x811c9dc5;
   for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }

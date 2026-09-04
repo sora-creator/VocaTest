@@ -299,19 +299,23 @@ async function sendResult(dm, dv, dt, result){
   return false;
 }
 
-// JSONP GET (Apps Script 응답을 CORS 제약 없이 읽기 위함 — <script> 태그는 CORS 대상이 아님)
-// 응답이 콜백(payload)로 안 오거나 타임아웃되면 null
+// Apps Script 응답을 숨은 iframe의 postMessage로 받음 (Chrome ORB가 JSONP script 응답을 차단하는 문제 회피)
 function jsonpFetch(url, timeoutMs=10000){
   return new Promise(resolve=>{
-    const cbName = '__vt_cb_' + uid(8);
-    const script = document.createElement('script');
+    const bridgeId = '__vt_bridge_' + uid(10);
+    const frame = document.createElement('iframe');
+    frame.hidden = true;
     let settled = false;
-    const cleanup = ()=>{ delete window[cbName]; script.remove(); clearTimeout(timer); };
-    window[cbName] = (data)=>{ if(settled) return; settled=true; cleanup(); resolve(data); };
+    const cleanup = ()=>{ window.removeEventListener('message',onMessage); frame.remove(); clearTimeout(timer); };
+    const onMessage = (e)=>{
+      const d=e.data;
+      if(settled || !d || d.source!=='VocaTestBridge' || d.id!==bridgeId) return;
+      settled=true; cleanup(); resolve(d.data);
+    };
+    window.addEventListener('message',onMessage);
     const timer = setTimeout(()=>{ if(settled) return; settled=true; cleanup(); resolve(null); }, timeoutMs);
-    script.onerror = ()=>{ if(settled) return; settled=true; cleanup(); resolve(null); };
-    script.src = url + (url.includes('?')?'&':'?') + 'callback=' + cbName;
-    document.body.appendChild(script);
+    frame.src = url + (url.includes('?')?'&':'?') + 'bridge=' + bridgeId;
+    document.body.appendChild(frame);
   });
 }
 
@@ -1952,6 +1956,11 @@ function renderResultsTab(root){
 function doGet(e){                                  // 짧은 링크 조회 등(GET, 선택 기능)
   var cb = e.parameter.callback || 'callback';
   var out = function(body){
+    if(e.parameter.bridge){
+      var safeBody = String(body).replace(/<\//g,'<\\/');
+      var html = '<script>parent.postMessage({source:"VocaTestBridge",id:' + JSON.stringify(e.parameter.bridge) + ',data:' + safeBody + '},"*");<' + '/script>';
+      return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
     return ContentService.createTextOutput(cb + '(' + body + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
   };
   if(e.parameter.action === 'health') return out(JSON.stringify({ ok:e.parameter.token === '${dc.token}', version:3 }));

@@ -326,12 +326,13 @@ async function storeShortLinkPayload(dv, dt, key, signed){
     if(legacyResult==='ok') return true;
   }
   try{
-    await fetch(dv, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
-                      body: JSON.stringify({ action:'store', key, token:dt||'', payload: signed }) });
+    // Apps Script 리디렉션에서도 본문이 안정적으로 전달되도록 단순 폼 POST 사용
+    const body = new URLSearchParams({ action:'store', key, token:dt||'', payload:JSON.stringify(signed) });
+    await fetch(dv, { method:'POST', mode:'no-cors', body });
   }catch(e){}
   let stored = null;
-  for(let i=0; i<4 && !stored; i++){
-    if(i>0) await new Promise(r=>setTimeout(r, 700));
+  for(let i=0; i<6 && !stored; i++){
+    if(i>0) await new Promise(r=>setTimeout(r, 1000));
     stored = await jsonpFetch(dv + '?action=fetch&key=' + encodeURIComponent(key)
                               + '&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now() + '_' + i);
   }
@@ -1894,8 +1895,13 @@ function renderResultsTab(root){
   const dc = deliveryCfg();
   const useHook = dc.mode==='hook';
   const guideCode =
-`function doPost(e){                                // 학생 결과 전송 또는 짧은 링크 저장(POST — 둘 다 토큰 필요)
-  var d = JSON.parse(e.postData.contents);
+`function doPost(e){                                // 학생 결과 전송(JSON) 또는 짧은 링크 저장(폼 POST)
+  var d;
+  try{ d = JSON.parse(e.postData.contents); }
+  catch(err){
+    d = { action:e.parameter.action, key:e.parameter.key, token:e.parameter.token,
+          payload:e.parameter.payload ? JSON.parse(e.parameter.payload) : null };
+  }
   if(d.token !== '${dc.token}'){                    // 비밀 토큰 확인
     return ContentService.createTextOutput('no');
   }

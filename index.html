@@ -229,6 +229,8 @@ function b64dec(str){
 // 이 값은 링크의 만료일/단어를 학생이 임의로 바꾸지 못하게 막는 열쇠입니다.
 // 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
 const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
+// VocaTest 자체 단축 링크 저장/조회 전용 Apps Script 배포 주소 (교사용 결과 전송 URL과 별개)
+const SHORT_LINK_API = 'https://script.google.com/macros/s/AKfycbwo5fuupOLd4-_LOJRdCYGMm-EnXPrg-o7dpC-0dZTeArYCc7grHA-veMIJB1owBY7f/exec';
 function fnv1a(str){ // 결정적 32bit 해시 → base36
   let h = 0x811c9dc5;
   for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -319,34 +321,55 @@ function jsonpFetch(url, timeoutMs=10000){
   });
 }
 
-// 서비스가 실제 성공 응답을 보낸 경우에만 단축 링크로 인정
+// VocaTest 자체 단축 링크용 안전한 Apps Script iframe bridge
 let shortLinkError = '';
-function createPublicShortLink(longLink, timeoutMs=15000){
+function isAppsScriptBridgeOrigin(origin){
+  return origin==='https://script.google.com' || /^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com$/i.test(origin);
+}
+function shortBridgeRequest(params, method='GET', timeoutMs=30000){
   return new Promise(resolve=>{
-    shortLinkError='';
-    const cbName='__vt_short_'+uid(10);
-    const script=document.createElement('script');
+    const bridgeId='__vt_short_bridge_'+uid(16);
+    const frame=document.createElement('iframe');
+    frame.hidden=true;
+    frame.name=bridgeId;
     let settled=false;
-    const cleanup=()=>{ delete window[cbName]; script.remove(); clearTimeout(timer); };
-    window[cbName]=(data)=>{
-      if(settled) return;
-      settled=true;
-      shortLinkError=data&&data.errormessage ? '단축 서비스 오류: '+data.errormessage : '';
-      cleanup();
-      resolve(data&&data.shorturl ? data.shorturl : null);
+    const cleanup=()=>{ window.removeEventListener('message',onMessage); frame.remove(); clearTimeout(timer); };
+    const finish=(data)=>{ if(settled) return; settled=true; cleanup(); resolve(data); };
+    const onMessage=(event)=>{
+      const data=event.data;
+      if(!isAppsScriptBridgeOrigin(event.origin) || !data || data.source!=='VocaTestShortBridge' || data.id!==bridgeId) return;
+      finish(data.data);
     };
-    const fail=()=>{
-      if(settled) return;
-      settled=true;
-      shortLinkError='단축 서비스 연결 실패 — 아래 원본 링크를 사용해 주세요';
-      cleanup();
-      resolve(null);
-    };
-    const timer=setTimeout(fail,timeoutMs);
-    script.onerror=fail;
-    script.src='https://is.gd/create.php?format=json&callback='+cbName+'&url='+encodeURIComponent(longLink);
-    document.body.appendChild(script);
+    window.addEventListener('message',onMessage);
+    const timer=setTimeout(()=>finish(null),timeoutMs);
+    document.body.appendChild(frame);
+    const all={...params,bridge:bridgeId};
+    if(method==='POST'){
+      const form=document.createElement('form');
+      form.method='POST'; form.action=SHORT_LINK_API; form.target=bridgeId; form.hidden=true;
+      Object.entries(all).forEach(([name,value])=>{
+        const input=document.createElement('input'); input.name=name; input.value=String(value??''); form.appendChild(input);
+      });
+      document.body.appendChild(form); form.submit(); form.remove();
+    }else{
+      frame.src=SHORT_LINK_API+'?'+new URLSearchParams(all).toString();
+    }
   });
+}
+async function createVocaShortLink(payload, token){
+  shortLinkError='';
+  const encoded=b64enc(signPayload(payload));
+  const result=await shortBridgeRequest({action:'createShortLink',token:token||'',payload:encoded},'POST');
+  if(!result){ shortLinkError='단축 링크 서버 응답을 받지 못했어요'; return null; }
+  if(!result.ok || !result.short_id){ shortLinkError='단축 링크 생성 실패: '+(result.error||'unknown_error'); return null; }
+  return location.origin+location.pathname+'?s='+encodeURIComponent(result.short_id);
+}
+async function loadVocaShortLink(shortId){
+  app.innerHTML='<div class="flex min-h-[70dvh] items-center justify-center text-sm font-bold text-slate-400">🔗 시험 정보를 불러오는 중…</div>';
+  const result=await shortBridgeRequest({action:'getShortLink',short_id:shortId});
+  if(!result) return renderExpired('단축 링크 서버에서 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.','링크를 불러올 수 없습니다');
+  if(!result.ok) return renderExpired(result.error==='expired' ? '이 단축 링크는 만료되었어요.' : '유효하지 않은 단축 링크예요.',result.error==='expired' ? '만료된 테스트입니다' : '유효하지 않은 링크입니다');
+  startStudentFromEncoded(null,result.payload);
 }
 
 // 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
@@ -577,6 +600,7 @@ function boot(){
     if(q.get('r')==='1'){ StudentApp(session, null, { rv:q.get('rv')||'', rt:q.get('rt')||'' }); }
     else { StudentApp(session, q.get('d')); }
   }
+  else if(q.get('s')){ loadVocaShortLink(q.get('s')); }
   else { TeacherApp(); }
 }
 
@@ -1596,7 +1620,7 @@ function renderMake(root){
       const shortArea = $('#t-short-result');
       async function attemptShorten(){
         shortArea.innerHTML = `<div class="rounded-2xl bg-slate-50 py-3 text-center text-sm font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
-        const shortLink = await createPublicShortLink(link);
+        const shortLink = await createVocaShortLink(payload,dt);
         if(shortLink){
           const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           shortArea.innerHTML = `
@@ -1719,7 +1743,7 @@ function renderMake(root){
       const area = $(`[data-mshort="${i}"]`);
       async function attemptShorten(){
         area.innerHTML = `<div class="rounded-xl bg-slate-50 py-2 text-center text-xs font-bold text-slate-400">🔗 짧은 링크 만드는 중…</div>`;
-        const shortLink = await createPublicShortLink(r.link);
+        const shortLink = await createVocaShortLink(r.payload,r.dt);
         if(shortLink){
           r.shortLink = shortLink;
           const list=DB.sessions(); const s=list.find(x=>x.key===r.key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
@@ -1799,7 +1823,7 @@ function renderSessions(root){
   root.querySelectorAll('[data-make-short]').forEach(b=> b.onclick=async()=>{
     const key=b.dataset.makeShort; const s=DB.sessions().find(x=>x.key===key); if(!s || !s.dv) return;
     b.disabled=true; b.textContent='만드는 중…';
-    const shortLink = await createPublicShortLink(rebuildLink(s));
+    const shortLink = await createVocaShortLink(sessionPayload(s),s.dt||'');
     if(shortLink){
       const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
       toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
@@ -1820,7 +1844,7 @@ function renderSessions(root){
     DB.saveSessions(list);
     if(s.shortLink && s.dm==='hook'){
       b.disabled=true; b.textContent='적용 중…';
-      s.shortLink = await createPublicShortLink(rebuildLink(s)) || s.shortLink;
+      s.shortLink = await createVocaShortLink(sessionPayload(s),s.dt||'') || s.shortLink;
       DB.saveSessions(list);
     }
     extendOpenKey = null;
@@ -1888,10 +1912,12 @@ function renderSessions(root){
   }
 }
 // 세션 카드에서 링크 재생성 (생성 당시 단어 스냅샷 + 만료일 유지)
-function rebuildLink(s){
+function sessionPayload(s){
   const snap = s.snapshot || DB.words().map(w=>({e:w.en,k:w.ko}));
-  const payload = { v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, goal:s.goal||0, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: snap };
-  return buildLink(payload);
+  return { v:1, s:s.key, n:s.name, sn:s.student||'', mode:s.mode, sec:s.sec, goal:s.goal||0, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w:snap };
+}
+function rebuildLink(s){
+  return buildLink(sessionPayload(s));
 }
 
 /* ---------- 탭: 결과 (구글시트 설정) ---------- */
@@ -1900,7 +1926,88 @@ function renderResultsTab(root){
   const useHook = dc.mode==='hook';
   const appBase = location.origin + location.pathname;
   const guideCode =
-`function doPost(e){                                // 학생 결과 전송(JSON) 또는 짧은 링크 저장(폼 POST)
+`function shortLinkSheet_(){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName('VocaTestShortLinks');
+  if(!sh){ sh=ss.insertSheet('VocaTestShortLinks'); sh.appendRow(['short_id','payload','created_at','expires_at','session_id']); }
+  return sh;
+}
+
+function shortLinkOutput_(data, bridge){
+  if(bridge){
+    var safeJson=JSON.stringify(data).replace(/</g,'\\u003c');
+    var html='<script>parent.postMessage({source:"VocaTestShortBridge",id:'+JSON.stringify(bridge)+',data:'+safeJson+'},"https://sora-creator.github.io");<'+'/script>';
+    return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function decodeShortPayload_(encoded){
+  try{
+    var json=Utilities.newBlob(Utilities.base64DecodeWebSafe(encoded)).getDataAsString('UTF-8');
+    return JSON.parse(json);
+  }catch(err){ return null; }
+}
+
+function cleanupExpiredShortLinks_(sh){
+  var props=PropertiesService.getScriptProperties();
+  var now=Date.now(), last=Number(props.getProperty('short_links_last_cleanup')||0);
+  if(now-last < 21600000) return;
+  var rows=sh.getDataRange().getValues();
+  for(var i=rows.length-1;i>=1;i--){
+    var expires=Number(rows[i][3]||0);
+    if(expires && now>expires) sh.deleteRow(i+1);
+  }
+  props.setProperty('short_links_last_cleanup',String(now));
+}
+
+function createShortLink_(e){
+  var bridge=e.parameter.bridge||'';
+  if(e.parameter.token !== '${dc.token}') return shortLinkOutput_({ok:false,error:'invalid_token'},bridge);
+  var encoded=e.parameter.payload||'';
+  if(!encoded) return shortLinkOutput_({ok:false,error:'missing_payload'},bridge);
+  var payload=decodeShortPayload_(encoded);
+  if(!payload) return shortLinkOutput_({ok:false,error:'invalid_payload'},bridge);
+  if(!payload.s) return shortLinkOutput_({ok:false,error:'missing_session_id'},bridge);
+  if(!Object.prototype.hasOwnProperty.call(payload,'exp')) return shortLinkOutput_({ok:false,error:'missing_expiration'},bridge);
+  var expires=Number(payload.exp||0);
+  if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge);
+  var lock=LockService.getScriptLock();
+  try{
+    lock.waitLock(10000);
+    var sh=shortLinkSheet_();
+    cleanupExpiredShortLinks_(sh);
+    var rows=sh.getDataRange().getValues(), id='', exists=true;
+    while(exists){
+      id=Utilities.getUuid().replace(/-/g,'').slice(0,20);
+      exists=false;
+      for(var i=1;i<rows.length;i++){ if(String(rows[i][0])===id){ exists=true; break; } }
+    }
+    sh.appendRow([id,encoded,new Date(),expires,String(payload.s)]);
+    return shortLinkOutput_({ok:true,short_id:id,expires_at:expires},bridge);
+  }catch(err){
+    return shortLinkOutput_({ok:false,error:'storage_failed'},bridge);
+  }finally{
+    if(lock.hasLock()) lock.releaseLock();
+  }
+}
+
+function getShortLink_(e){
+  var bridge=e.parameter.bridge||'', id=e.parameter.short_id||'';
+  if(!/^[a-f0-9]{20}$/.test(id)) return shortLinkOutput_({ok:false,error:'not_found'},bridge);
+  var sh=shortLinkSheet_(), rows=sh.getDataRange().getValues();
+  for(var i=1;i<rows.length;i++){
+    if(String(rows[i][0])===id){
+      var expires=Number(rows[i][3]||0);
+      if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge);
+      return shortLinkOutput_({ok:true,payload:String(rows[i][1]||'')},bridge);
+    }
+  }
+  return shortLinkOutput_({ok:false,error:'not_found'},bridge);
+}
+
+function doPost(e){                                // 학생 결과 전송(JSON) 또는 자체 단축 링크 생성
+  if(e && e.parameter && e.parameter.action === 'createShortLink') return createShortLink_(e);
   var d;
   try{ d = JSON.parse(e.postData.contents); }
   catch(err){
@@ -1937,6 +2044,7 @@ function renderResultsTab(root){
 }
 
 function doGet(e){                                  // 짧은 링크 조회 등(GET, 선택 기능)
+  if(e.parameter.action === 'getShortLink') return getShortLink_(e);
   var cb = e.parameter.callback || 'callback';
   var out = function(body){
     if(e.parameter.bridge){
@@ -2073,7 +2181,7 @@ function doGet(e){                                  // 짧은 링크 조회 등(
         </div>
 
         <div class="mt-2 rounded-2xl bg-grass-50 p-3 text-[11px] leading-relaxed text-grass-700">
-          🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 모든 요청은 비밀 토큰이 맞을 때만 처리되고, 시트 전체나 구글 계정 자체에는 접근할 수 없습니다(정해진 딱 한 칸만 주고받음). "🔗 짧은 링크 만들기"를 쓰면 단어 데이터를 이 시트의 별도 탭(VocaTestLinks)에 저장해두고 짧은 키로 불러오는 방식이라 토큰이 없으면 조회도 안 돼요.
+          🔒 결과는 <b>선생님 구글시트에만</b> 쌓이고 외부인은 볼 수 없어요. 결과 전송과 짧은 링크 생성은 비밀 토큰이 맞을 때만 처리됩니다. "🔗 짧은 링크 만들기"를 쓰면 서명된 시험 데이터를 별도 탭(VocaTestShortLinks)에 저장하고, 학생은 토큰이 들어 있지 않은 무작위 짧은 키로 불러옵니다. 만료된 데이터는 조회가 차단되고 주기적으로 정리됩니다.
         </div>
         <div class="mt-2 rounded-2xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700">
           🔁 <b>테스트 만들기</b> 탭에서 학생 이름을 적으면 "최근 오답 복습 링크 만들기" 버튼이 나타나요 — 이 학생이 최근 본 시험들의 오답을 시트에서 모아 복습용 링크를 자동으로 만들어줘요. 이 기능을 쓰려면 <b>아래 코드를 다시 복사해서 재배포</b>해야 해요(기존 배포에 코드만 덮어써도 됨).
@@ -2102,7 +2210,7 @@ function doGet(e){                                  // 짧은 링크 조회 등(
 // 짧은 링크(?r=1&rv=웹훅주소&rt=토큰)면 원격에서 payload를 받아온 뒤 initStudentApp 실행
 function StudentApp(sessionKey, dataStr, remote){
   if(dataStr){
-    initStudentApp(sessionKey, b64dec(dataStr));
+    startStudentFromEncoded(sessionKey,dataStr);
     return;
   }
   if(remote && remote.rv){
@@ -2110,6 +2218,12 @@ function StudentApp(sessionKey, dataStr, remote){
     return;
   }
   renderExpired('테스트 정보를 불러올 수 없어요. 링크가 올바른지 확인해 주세요.');
+}
+
+// 긴 링크와 자체 단축 링크가 함께 사용하는 유일한 decode → 검증 → 학생 앱 진입 경로
+function startStudentFromEncoded(sessionKey, dataStr){
+  const payload=b64dec(dataStr);
+  initStudentApp(sessionKey || (payload&&payload.s) || '',payload);
 }
 
 function initStudentApp(sessionKey, payload){
@@ -2575,11 +2689,11 @@ function initStudentApp(sessionKey, payload){
 }
 
 /* ----- 만료/오류 화면 ----- */
-function renderExpired(msg){
+function renderExpired(msg, title='만료된 테스트입니다'){
   app.innerHTML = `
     <div class="flex min-h-[75dvh] flex-col items-center justify-center text-center anim-in">
       <div class="mb-4 grid h-20 w-20 place-items-center rounded-3xl bg-coral-50 text-4xl">🔒</div>
-      <h1 class="text-xl font-extrabold text-slate-700">만료된 테스트입니다</h1>
+      <h1 class="text-xl font-extrabold text-slate-700">${esc(title)}</h1>
       <p class="mt-2 max-w-xs text-sm text-slate-400">${esc(msg)}</p>
       <p class="mt-6 text-xs text-slate-300">궁금한 점은 선생님께 문의해 주세요.</p>
     </div>`;

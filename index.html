@@ -230,7 +230,7 @@ function b64dec(str){
 // 공유 전에 아래 문자열을 본인만의 값으로 바꾸면 보안이 더 강해집니다.
 const SIG_SALT = 'Nv7LPd2SLBowr045trlk3AWbrUt17dHu';
 // VocaTest 자체 단축 링크 저장/조회 전용 Apps Script 배포 주소 (교사용 결과 전송 URL과 별개)
-const SHORT_LINK_API = 'https://script.google.com/macros/s/AKfycbwo5fuupOLd4-_LOJRdCYGMm-EnXPrg-o7dpC-0dZTeArYCc7grHA-veMIJB1owBY7f/exec';
+const SHORT_LINK_API = 'https://script.google.com/macros/s/AKfycbxmd3jv99Ad4OVkX5Ffi4Q7pRS8AiCZ_Lsk_eaHlxDYk9zWoEwnWkSy7eOp30UgbCCn/exec';
 function fnv1a(str){ // 결정적 32bit 해시 → base36
   let h = 0x811c9dc5;
   for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
@@ -1975,17 +1975,23 @@ function renderResultsTab(root){
   return sh;
 }
 
-function shortLinkOutput_(data, bridge, callback){
+function shortJsonpOutput_(data, callback){
+  var cb = String(callback || 'callback');
+  if(!/^[A-Za-z_$][0-9A-Za-z_$]*$/.test(cb)) cb='cb';
   var safeJson = JSON.stringify(data).replace(/</g,'\\u003c');
+  return ContentService.createTextOutput(cb + '(' + safeJson + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+function shortLinkOutput_(data, bridge, callback){
   if(callback){
-    if(!/^[a-zA-Z_$][0-9a-zA-Z_$]*$/.test(callback)) callback='cb';
-    return ContentService.createTextOutput(callback + '(' + safeJson + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return shortJsonpOutput_(data, callback);
   }
   if(bridge){
+    var safeJson = JSON.stringify(data).replace(/</g,'\\u003c');
     var html='<script>parent.postMessage({source:"VocaTestShortBridge",id:'+JSON.stringify(bridge)+',data:'+safeJson+'},"https://sora-creator.github.io");<'+'/script>';
     return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
-  return ContentService.createTextOutput(safeJson).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function decodeShortPayload_(encoded){
@@ -2045,17 +2051,18 @@ function createShortLink_(e){
 }
 
 function getShortLink_(e){
-  var bridge=e.parameter.bridge||'', callback=e.parameter.callback||'', id=e.parameter.short_id||'';
-  if(!/^[a-f0-9]{20}$/.test(id)) return shortLinkOutput_({ok:false,error:'not_found'},bridge,callback);
+  var callback=e.parameter.callback||'';
+  var id=e.parameter.short_id||'';
+  if(!/^[a-f0-9]{20}$/.test(id)) return shortJsonpOutput_({ok:false,error:'not_found'},callback);
   var sh=shortLinkSheet_(), rows=sh.getDataRange().getValues();
   for(var i=1;i<rows.length;i++){
     if(String(rows[i][0])===id){
       var expires=Number(rows[i][3]||0);
-      if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge,callback);
-      return shortLinkOutput_({ok:true,payload:String(rows[i][1]||'')},bridge,callback);
+      if(expires && Date.now()>expires) return shortJsonpOutput_({ok:false,error:'expired'},callback);
+      return shortJsonpOutput_({ok:true,payload:String(rows[i][1]||'')},callback);
     }
   }
-  return shortLinkOutput_({ok:false,error:'not_found'},bridge,callback);
+  return shortJsonpOutput_({ok:false,error:'not_found'},callback);
 }
 
 function doPost(e){                                // 학생 결과 전송(JSON) 또는 자체 단축 링크 생성

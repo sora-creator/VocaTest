@@ -318,6 +318,13 @@ function jsonpFetch(url, timeoutMs=10000){
 // 짧은 링크용 payload 저장. GET 대신 POST를 써서 단어 수가 많아도(URL 길이 제한 없이) 저장 가능하게 함.
 // POST는 no-cors라 저장 성공 여부를 응답으로 못 읽으므로, 곧바로 짧은 조회(키만 담긴 짧은 GET)로 실제 반영됐는지 확인함(반영 지연 대비 약간의 지연을 두고 몇 차례 재시도).
 async function storeShortLinkPayload(dv, dt, key, signed){
+  // 예전 Apps Script 배포본은 GET 저장만 지원하므로 URL이 짧을 때 먼저 호환 방식으로 시도
+  const legacyUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
+                    + '&payload=' + encodeURIComponent(JSON.stringify(signed));
+  if(legacyUrl.length<7500){
+    const legacyResult = await jsonpFetch(legacyUrl + '&_=' + Date.now());
+    if(legacyResult==='ok') return true;
+  }
   try{
     await fetch(dv, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
                       body: JSON.stringify({ action:'store', key, token:dt||'', payload: signed }) });
@@ -325,7 +332,8 @@ async function storeShortLinkPayload(dv, dt, key, signed){
   let stored = null;
   for(let i=0; i<4 && !stored; i++){
     if(i>0) await new Promise(r=>setTimeout(r, 700));
-    stored = await jsonpFetch(dv + '?action=fetch&key=' + encodeURIComponent(key));
+    stored = await jsonpFetch(dv + '?action=fetch&key=' + encodeURIComponent(key)
+                              + '&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now() + '_' + i);
   }
   return !!stored;
 }
@@ -1580,7 +1588,7 @@ function renderMake(root){
         const signed = signPayload(payload);
         const ok = await storeShortLinkPayload(dv, dt, key, signed);
         if(ok){
-          const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv);
+          const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv) + '&rt=' + encodeURIComponent(dt);
           const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           shortArea.innerHTML = `
             <div class="flex items-center gap-2 rounded-xl bg-grass-50 px-4 py-3 ring-1 ring-grass-100">
@@ -1705,7 +1713,7 @@ function renderMake(root){
         const signed = signPayload(r.payload);
         const ok = await storeShortLinkPayload(r.dv, r.dt, r.key, signed);
         if(ok){
-          const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv);
+          const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv) + '&rt=' + encodeURIComponent(r.dt||'');
           r.shortLink = shortLink;
           const list=DB.sessions(); const s=list.find(x=>x.key===r.key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           area.innerHTML = `
@@ -1787,7 +1795,7 @@ function renderSessions(root){
     const signed = signPayload({ v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: s.snapshot||[] });
     const ok = await storeShortLinkPayload(s.dv, s.dt||'', key, signed);
     if(ok){
-      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv);
+      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv) + '&rt=' + encodeURIComponent(s.dt||'');
       const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
       toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
     } else {
@@ -2035,7 +2043,8 @@ function StudentApp(sessionKey, dataStr, remote){
         <div class="mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-brand-500 text-3xl shadow-soft floaty">📚</div>
         <p class="text-sm font-bold text-slate-400">테스트를 불러오는 중…</p>
       </div>`;
-    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey);
+    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey)
+                + '&token=' + encodeURIComponent(remote.rt||'') + '&_=' + Date.now();
     jsonpFetch(url).then(payload=>{
       if(!payload){ return renderExpired('테스트 정보를 불러오지 못했어요. 인터넷 연결을 확인하거나 링크가 올바른지 확인해 주세요.'); }
       initStudentApp(sessionKey, payload);

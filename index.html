@@ -324,41 +324,20 @@ function jsonpFetch(url, timeoutMs=10000){
 let shortLinkError = '';
 async function storeShortLinkPayload(dv, dt, key, signed){
   shortLinkError = '';
-  const health = await jsonpFetch(dv + '?action=health&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now(), 30000);
-  if(health && health.version>=3 && !health.ok){ shortLinkError='비밀 토큰이 Apps Script와 일치하지 않아요'; return false; }
-  if(!health) shortLinkError='Apps Script 응답을 받지 못했어요 (브라우저 차단 또는 시간 초과)';
-  else if(health.version<3) shortLinkError='Apps Script에 최신 코드가 배포되지 않았어요';
-  // 예전 Apps Script 배포본은 GET 저장만 지원하므로 URL이 짧을 때 먼저 호환 방식으로 시도
-  const legacyUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
-                    + '&payload=' + encodeURIComponent(JSON.stringify(signed));
-  if(legacyUrl.length<7500){
-    const legacyResult = await jsonpFetch(legacyUrl + '&_=' + Date.now());
-    if(legacyResult==='ok') return true;
-  }
-  // 큰 데이터는 URL 제한을 피하도록 base64 문자열을 여러 GET 요청으로 나눠 저장
+  // Chrome ORB를 피하기 위해 응답을 읽지 않는 GET 요청으로 분할 저장
   const encoded = b64enc(signed);
   const chunks = encoded.match(/.{1,1800}/g) || [];
-  let chunksStored = chunks.length>0;
-  for(let i=0; i<chunks.length && chunksStored; i++){
-    const chunkUrl = dv + '?action=storeChunk&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
-                     + '&part=' + i + '&total=' + chunks.length + '&chunk=' + encodeURIComponent(chunks[i]) + '&_=' + Date.now();
-    chunksStored = (await jsonpFetch(chunkUrl))==='ok';
-  }
-  if(chunksStored) return true;
   try{
-    // Apps Script 리디렉션에서도 본문이 안정적으로 전달되도록 단순 폼 POST 사용
-    const body = new URLSearchParams({ action:'store', key, token:dt||'', payload:JSON.stringify(signed) });
-    await fetch(dv, { method:'POST', mode:'no-cors', body });
-  }catch(e){}
-  let stored = null;
-  for(let i=0; i<6 && !stored; i++){
-    if(i>0) await new Promise(r=>setTimeout(r, 1000));
-    stored = await jsonpFetch(dv + '?action=fetch&key=' + encodeURIComponent(key)
-                              + '&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now() + '_' + i);
+    for(let i=0; i<chunks.length; i++){
+      const chunkUrl = dv + '?action=storeChunk&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
+                       + '&part=' + i + '&total=' + chunks.length + '&chunk=' + encodeURIComponent(chunks[i]) + '&_=' + Date.now();
+      await fetch(chunkUrl, { mode:'no-cors', cache:'no-store' });
+    }
+    return chunks.length>0;
+  }catch(e){
+    shortLinkError='Apps Script 저장 요청을 보내지 못했어요';
+    return false;
   }
-  if(stored) return true;
-  if(health && health.ok) shortLinkError='Apps Script 저장 요청이 처리되지 않았어요';
-  return false;
 }
 
 // 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
@@ -1611,7 +1590,7 @@ function renderMake(root){
         const signed = signPayload(payload);
         const ok = await storeShortLinkPayload(dv, dt, key, signed);
         if(ok){
-          const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(dv) + '&rt=' + encodeURIComponent(dt);
+          const shortLink = dv + '?action=open&key=' + encodeURIComponent(key);
           const list=DB.sessions(); const s=list.find(x=>x.key===key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           shortArea.innerHTML = `
             <div class="flex items-center gap-2 rounded-xl bg-grass-50 px-4 py-3 ring-1 ring-grass-100">
@@ -1736,7 +1715,7 @@ function renderMake(root){
         const signed = signPayload(r.payload);
         const ok = await storeShortLinkPayload(r.dv, r.dt, r.key, signed);
         if(ok){
-          const shortLink = location.origin + location.pathname + '?session=' + r.key + '&r=1&rv=' + encodeURIComponent(r.dv) + '&rt=' + encodeURIComponent(r.dt||'');
+          const shortLink = r.dv + '?action=open&key=' + encodeURIComponent(r.key);
           r.shortLink = shortLink;
           const list=DB.sessions(); const s=list.find(x=>x.key===r.key); if(s){ s.shortLink=shortLink; DB.saveSessions(list); }
           area.innerHTML = `
@@ -1818,7 +1797,7 @@ function renderSessions(root){
     const signed = signPayload({ v:1, s:s.key, n:s.name, mode:s.mode, sec:s.sec, exp:s.exp||0, dm:s.dm||'', dv:s.dv||'', dt:s.dt||'', rng:s.rng||'', cnt:s.cnt||'', w: s.snapshot||[] });
     const ok = await storeShortLinkPayload(s.dv, s.dt||'', key, signed);
     if(ok){
-      const shortLink = location.origin + location.pathname + '?session=' + key + '&r=1&rv=' + encodeURIComponent(s.dv) + '&rt=' + encodeURIComponent(s.dt||'');
+      const shortLink = s.dv + '?action=open&key=' + encodeURIComponent(key);
       const list=DB.sessions(); const t=list.find(x=>x.key===key); if(t){ t.shortLink=shortLink; DB.saveSessions(list); }
       toast('짧은 링크를 만들었어요 🔗'); renderSessions(root);
     } else {
@@ -1916,6 +1895,7 @@ function rebuildLink(s){
 function renderResultsTab(root){
   const dc = deliveryCfg();
   const useHook = dc.mode==='hook';
+  const appBase = location.origin + location.pathname;
   const guideCode =
 `function doPost(e){                                // 학생 결과 전송(JSON) 또는 짧은 링크 저장(폼 POST)
   var d;
@@ -1969,6 +1949,25 @@ function doGet(e){                                  // 짧은 링크 조회 등(
   if(!sh){ sh = ss.insertSheet('VocaTestLinks'); sh.appendRow(['key','payload','저장시각']); }
   var key = e.parameter.key;
 
+  if(e.parameter.action === 'open'){                 // 공유 링크를 최상위 페이지로 열어 ORB 없이 VocaTest로 전달
+    var rowsO = sh.getDataRange().getValues(), encodedO = '';
+    for(var o=1;o<rowsO.length;o++){
+      if(rowsO[o][0] === key){
+        var savedO = String(rowsO[o][1] || '');
+        if(savedO.indexOf('chunks:') === 0){
+          var totalO = Number(savedO.split(':')[1]);
+          encodedO = sh.getRange(o+1,4,totalO).getValues()[0].join('');
+        } else if(savedO){
+          encodedO = Utilities.base64EncodeWebSafe(savedO, Utilities.Charset.UTF_8).replace(/=+$/,'');
+        }
+        break;
+      }
+    }
+    if(!encodedO) return HtmlService.createHtmlOutput('<p>테스트 정보를 찾지 못했습니다. 선생님께 새 링크를 요청해 주세요.</p>');
+    var targetO = '${appBase}' + '?session=' + encodeURIComponent(key) + '&d=' + encodedO;
+    var htmlO = '<script>location.replace(' + JSON.stringify(targetO) + ');<' + '/script>';
+    return HtmlService.createHtmlOutput(htmlO);
+  }
   if(e.parameter.action === 'store'){                // 짧은 데이터는 응답 확인이 가능한 GET으로 저장(POST 실패 시에도 동작)
     if(e.parameter.token !== '${dc.token}') return out('null');
     var rows1 = sh.getDataRange().getValues();
@@ -2104,18 +2103,7 @@ function StudentApp(sessionKey, dataStr, remote){
     return;
   }
   if(remote && remote.rv){
-    app.innerHTML = `
-      <div class="flex min-h-[70dvh] flex-col items-center justify-center text-center anim-in">
-        <div class="mb-4 grid h-16 w-16 place-items-center rounded-3xl bg-brand-500 text-3xl shadow-soft floaty">📚</div>
-        <p class="text-sm font-bold text-slate-400">테스트를 불러오는 중…</p>
-      </div>`;
-    const url = remote.rv + '?action=fetch&key=' + encodeURIComponent(sessionKey)
-                + '&token=' + encodeURIComponent(remote.rt||'') + '&_=' + Date.now();
-    jsonpFetch(url).then(payload=>{
-      if(typeof payload==='string' && payload.startsWith('b64:')) payload=b64dec(payload.slice(4));
-      if(!payload){ return renderExpired('테스트 정보를 불러오지 못했어요. 인터넷 연결을 확인하거나 링크가 올바른지 확인해 주세요.'); }
-      initStudentApp(sessionKey, payload);
-    });
+    location.replace(remote.rv + '?action=open&key=' + encodeURIComponent(sessionKey));
     return;
   }
   renderExpired('테스트 정보를 불러올 수 없어요. 링크가 올바른지 확인해 주세요.');

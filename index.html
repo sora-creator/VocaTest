@@ -2025,21 +2025,16 @@ function createShortLink_(e){
   if(!Object.prototype.hasOwnProperty.call(payload,'exp')) return shortLinkOutput_({ok:false,error:'missing_expiration'},bridge,callback);
   var expires=Number(payload.exp||0);
   if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge,callback);
-  var requestId=(e.parameter.short_id||'').toString().toLowerCase();
-  if(requestId && !/^[a-f0-9]{20}$/.test(requestId)) return shortLinkOutput_({ok:false,error:'invalid_short_id'},bridge,callback);
+  var id=String(e.parameter.short_id||'');
+  if(!/^[a-f0-9]{20}$/.test(id)) return shortLinkOutput_({ok:false,error:'invalid_short_id'},bridge,callback);
   var lock=LockService.getScriptLock();
   try{
     lock.waitLock(10000);
     var sh=shortLinkSheet_();
     cleanupExpiredShortLinks_(sh);
     var rows=sh.getDataRange().getValues();
-    var id=requestId;
-    while(true){
-      if(!id) id=Utilities.getUuid().replace(/-/g,'').slice(0,20);
-      var exists=false;
-      for(var i=1;i<rows.length;i++){ if(String(rows[i][0])===id){ exists=true; break; } }
-      if(!exists) break;
-      if(requestId){ id=''; requestId=''; } // collision: fallback to generated id
+    for(var i=1;i<rows.length;i++){
+      if(String(rows[i][0])===id) return shortLinkOutput_({ok:false,error:'duplicate_short_id'},bridge,callback);
     }
     sh.appendRow([id,encoded,new Date(),expires,String(payload.s)]);
     return shortLinkOutput_({ok:true,short_id:id,expires_at:expires},bridge,callback);

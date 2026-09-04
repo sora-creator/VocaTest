@@ -320,9 +320,10 @@ function jsonpFetch(url, timeoutMs=10000){
 let shortLinkError = '';
 async function storeShortLinkPayload(dv, dt, key, signed){
   shortLinkError = '';
-  const health = await jsonpFetch(dv + '?action=health&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now());
+  const health = await jsonpFetch(dv + '?action=health&token=' + encodeURIComponent(dt||'') + '&_=' + Date.now(), 30000);
   if(health && health.version>=3 && !health.ok){ shortLinkError='비밀 토큰이 Apps Script와 일치하지 않아요'; return false; }
-  if(!health || health.version<3) shortLinkError='Apps Script에 최신 코드가 배포되지 않았어요';
+  if(!health) shortLinkError='Apps Script 응답을 받지 못했어요 (브라우저 차단 또는 시간 초과)';
+  else if(health.version<3) shortLinkError='Apps Script에 최신 코드가 배포되지 않았어요';
   // 예전 Apps Script 배포본은 GET 저장만 지원하므로 URL이 짧을 때 먼저 호환 방식으로 시도
   const legacyUrl = dv + '?action=store&key=' + encodeURIComponent(key) + '&token=' + encodeURIComponent(dt||'')
                     + '&payload=' + encodeURIComponent(JSON.stringify(signed));

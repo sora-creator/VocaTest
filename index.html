@@ -321,52 +321,94 @@ function jsonpFetch(url, timeoutMs=10000){
   });
 }
 
-// VocaTest 자체 단축 링크용 안전한 Apps Script iframe bridge
+// VocaTest 자체 단축 링크용 transport: POST 저장 후 GET(JSONP) 조회
 let shortLinkError = '';
-function isAppsScriptBridgeOrigin(origin){
-  return origin==='https://script.google.com' || /^https:\/\/(?:[a-z0-9-]+\.)*googleusercontent\.com$/i.test(origin);
+
+function randomHexId(len=20){
+  const bytes = new Uint8Array(Math.ceil(len / 2));
+  if(window.crypto && crypto.getRandomValues){
+    crypto.getRandomValues(bytes);
+  }else{
+    for(let i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256);
+  }
+  return [...bytes].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,len);
 }
-function shortBridgeRequest(params, method='GET', timeoutMs=30000){
+
+function shortJsonpGet(action, params, timeoutMs=10000){
   return new Promise(resolve=>{
-    const bridgeId='__vt_short_bridge_'+uid(16);
-    const frame=document.createElement('iframe');
-    frame.hidden=true;
-    frame.name=bridgeId;
-    let settled=false;
-    const cleanup=()=>{ window.removeEventListener('message',onMessage); frame.remove(); clearTimeout(timer); };
-    const finish=(data)=>{ if(settled) return; settled=true; cleanup(); resolve(data); };
-    const onMessage=(event)=>{
-      const data=event.data;
-      if(!isAppsScriptBridgeOrigin(event.origin) || !data || data.source!=='VocaTestShortBridge' || data.id!==bridgeId) return;
-      finish(data.data);
+    const cb='__vt_short_cb_'+uid(12);
+    const script=document.createElement('script');
+    let settled = false;
+    let timer = null;
+
+    const cleanup = ()=>{
+      settled = true;
+      clearTimeout(timer);
+      script.remove();
+      try{ delete window[cb]; }catch(e){}
     };
-    window.addEventListener('message',onMessage);
-    const timer=setTimeout(()=>finish(null),timeoutMs);
-    document.body.appendChild(frame);
-    const all={...params,bridge:bridgeId};
-    if(method==='POST'){
-      const form=document.createElement('form');
-      form.method='POST'; form.action=SHORT_LINK_API; form.target=bridgeId; form.hidden=true;
-      Object.entries(all).forEach(([name,value])=>{
-        const input=document.createElement('input'); input.name=name; input.value=String(value??''); form.appendChild(input);
-      });
-      document.body.appendChild(form); form.submit(); form.remove();
-    }else{
-      frame.src=SHORT_LINK_API+'?'+new URLSearchParams(all).toString();
-    }
+    const finish = (data)=>{
+      if(settled) return;
+      cleanup();
+      resolve(data);
+    };
+
+    window[cb] = (data)=>finish(data);
+    const q = new URLSearchParams({ ...(params||{}), action: action || '', callback: cb });
+    script.src = SHORT_LINK_API + '?' + q.toString();
+    script.async = true;
+    script.onerror = ()=>finish(null);
+    timer = setTimeout(()=>finish(null), timeoutMs);
+    document.body.appendChild(script);
   });
 }
+
+function postCreateShortLink(payload, shortId, token){
+  return new Promise(resolve=>{
+    const frame=document.createElement('iframe');
+    frame.name='__vt_short_post_'+uid(12);
+    frame.hidden=true;
+    const form=document.createElement('form');
+    form.method='POST';
+    form.action=SHORT_LINK_API;
+    form.target=frame.name;
+    form.hidden=true;
+    const params={ action:'createShortLink', token: token||'', payload: payload, short_id: shortId };
+    Object.entries(params).forEach(([name,value])=>{
+      const input=document.createElement('input');
+      input.name=name;
+      input.value=String(value||'');
+      form.appendChild(input);
+    });
+    document.body.appendChild(frame);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+    setTimeout(()=>{ frame.remove(); resolve(true); }, 40);
+  });
+}
+
 async function createVocaShortLink(payload, token){
   shortLinkError='';
   const encoded=b64enc(signPayload(payload));
-  const result=await shortBridgeRequest({action:'createShortLink',token:token||'',payload:encoded},'POST');
-  if(!result){ shortLinkError='단축 링크 서버 응답을 받지 못했어요'; return null; }
-  if(!result.ok || !result.short_id){ shortLinkError='단축 링크 생성 실패: '+(result.error||'unknown_error'); return null; }
-  return location.origin+location.pathname+'?s='+encodeURIComponent(result.short_id);
+  const shortId=randomHexId(20);
+  await postCreateShortLink(encoded, shortId, token);
+
+  const deadline = Date.now() + 15000;
+  while(Date.now() < deadline){
+    const result = await shortJsonpGet('getShortLink', { short_id: shortId }, 5000);
+    if(result && result.ok && result.payload){
+      return location.origin + location.pathname + '?s=' + encodeURIComponent(shortId);
+    }
+    await new Promise(resolve=>setTimeout(resolve, 350));
+  }
+  shortLinkError='단축 링크 저장은 되었으나 조회 확인이 지연되어 실패했습니다.';
+  return null;
 }
+
 async function loadVocaShortLink(shortId){
   app.innerHTML='<div class="flex min-h-[70dvh] items-center justify-center text-sm font-bold text-slate-400">🔗 시험 정보를 불러오는 중…</div>';
-  const result=await shortBridgeRequest({action:'getShortLink',short_id:shortId});
+  const result=await shortJsonpGet('getShortLink', { short_id: shortId });
   if(!result) return renderExpired('단축 링크 서버에서 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.','링크를 불러올 수 없습니다');
   if(!result.ok) return renderExpired(result.error==='expired' ? '이 단축 링크는 만료되었어요.' : '유효하지 않은 단축 링크예요.',result.error==='expired' ? '만료된 테스트입니다' : '유효하지 않은 링크입니다');
   startStudentFromEncoded(null,result.payload);
@@ -1933,13 +1975,17 @@ function renderResultsTab(root){
   return sh;
 }
 
-function shortLinkOutput_(data, bridge){
+function shortLinkOutput_(data, bridge, callback){
+  var safeJson = JSON.stringify(data).replace(/</g,'\\u003c');
+  if(callback){
+    if(!/^[a-zA-Z_$][0-9a-zA-Z_$]*$/.test(callback)) callback='cb';
+    return ContentService.createTextOutput(callback + '(' + safeJson + ')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   if(bridge){
-    var safeJson=JSON.stringify(data).replace(/</g,'\\u003c');
     var html='<script>parent.postMessage({source:"VocaTestShortBridge",id:'+JSON.stringify(bridge)+',data:'+safeJson+'},"https://sora-creator.github.io");<'+'/script>';
     return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
-  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(safeJson).setMimeType(ContentService.MimeType.JSON);
 }
 
 function decodeShortPayload_(encoded){
@@ -1963,47 +2009,53 @@ function cleanupExpiredShortLinks_(sh){
 
 function createShortLink_(e){
   var bridge=e.parameter.bridge||'';
-  if(e.parameter.token !== '${dc.token}') return shortLinkOutput_({ok:false,error:'invalid_token'},bridge);
+  var callback=e.parameter.callback||'';
+  if(e.parameter.token !== '${dc.token}') return shortLinkOutput_({ok:false,error:'invalid_token'},bridge,callback);
   var encoded=e.parameter.payload||'';
-  if(!encoded) return shortLinkOutput_({ok:false,error:'missing_payload'},bridge);
+  if(!encoded) return shortLinkOutput_({ok:false,error:'missing_payload'},bridge,callback);
   var payload=decodeShortPayload_(encoded);
-  if(!payload) return shortLinkOutput_({ok:false,error:'invalid_payload'},bridge);
-  if(!payload.s) return shortLinkOutput_({ok:false,error:'missing_session_id'},bridge);
-  if(!Object.prototype.hasOwnProperty.call(payload,'exp')) return shortLinkOutput_({ok:false,error:'missing_expiration'},bridge);
+  if(!payload) return shortLinkOutput_({ok:false,error:'invalid_payload'},bridge,callback);
+  if(!payload.s) return shortLinkOutput_({ok:false,error:'missing_session_id'},bridge,callback);
+  if(!Object.prototype.hasOwnProperty.call(payload,'exp')) return shortLinkOutput_({ok:false,error:'missing_expiration'},bridge,callback);
   var expires=Number(payload.exp||0);
-  if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge);
+  if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge,callback);
+  var requestId=(e.parameter.short_id||'').toString().toLowerCase();
+  if(requestId && !/^[a-f0-9]{20}$/.test(requestId)) return shortLinkOutput_({ok:false,error:'invalid_short_id'},bridge,callback);
   var lock=LockService.getScriptLock();
   try{
     lock.waitLock(10000);
     var sh=shortLinkSheet_();
     cleanupExpiredShortLinks_(sh);
-    var rows=sh.getDataRange().getValues(), id='', exists=true;
-    while(exists){
-      id=Utilities.getUuid().replace(/-/g,'').slice(0,20);
-      exists=false;
+    var rows=sh.getDataRange().getValues();
+    var id=requestId;
+    while(true){
+      if(!id) id=Utilities.getUuid().replace(/-/g,'').slice(0,20);
+      var exists=false;
       for(var i=1;i<rows.length;i++){ if(String(rows[i][0])===id){ exists=true; break; } }
+      if(!exists) break;
+      if(requestId){ id=''; requestId=''; } // collision: fallback to generated id
     }
     sh.appendRow([id,encoded,new Date(),expires,String(payload.s)]);
-    return shortLinkOutput_({ok:true,short_id:id,expires_at:expires},bridge);
+    return shortLinkOutput_({ok:true,short_id:id,expires_at:expires},bridge,callback);
   }catch(err){
-    return shortLinkOutput_({ok:false,error:'storage_failed'},bridge);
+    return shortLinkOutput_({ok:false,error:'storage_failed'},bridge,callback);
   }finally{
     if(lock.hasLock()) lock.releaseLock();
   }
 }
 
 function getShortLink_(e){
-  var bridge=e.parameter.bridge||'', id=e.parameter.short_id||'';
-  if(!/^[a-f0-9]{20}$/.test(id)) return shortLinkOutput_({ok:false,error:'not_found'},bridge);
+  var bridge=e.parameter.bridge||'', callback=e.parameter.callback||'', id=e.parameter.short_id||'';
+  if(!/^[a-f0-9]{20}$/.test(id)) return shortLinkOutput_({ok:false,error:'not_found'},bridge,callback);
   var sh=shortLinkSheet_(), rows=sh.getDataRange().getValues();
   for(var i=1;i<rows.length;i++){
     if(String(rows[i][0])===id){
       var expires=Number(rows[i][3]||0);
-      if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge);
-      return shortLinkOutput_({ok:true,payload:String(rows[i][1]||'')},bridge);
+      if(expires && Date.now()>expires) return shortLinkOutput_({ok:false,error:'expired'},bridge,callback);
+      return shortLinkOutput_({ok:true,payload:String(rows[i][1]||'')},bridge,callback);
     }
   }
-  return shortLinkOutput_({ok:false,error:'not_found'},bridge);
+  return shortLinkOutput_({ok:false,error:'not_found'},bridge,callback);
 }
 
 function doPost(e){                                // 학생 결과 전송(JSON) 또는 자체 단축 링크 생성

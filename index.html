@@ -321,7 +321,7 @@ function jsonpFetch(url, timeoutMs=10000){
   });
 }
 
-// VocaTest 자체 단축 링크용 transport: POST 저장 후 GET(JSONP) 조회
+// VocaTest 자체 단축 링크용 transport: POST 저장 후 openShort 서버 이동
 let shortLinkError = '';
 
 function randomHexId(len=20){
@@ -334,40 +334,21 @@ function randomHexId(len=20){
   return [...bytes].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,len);
 }
 
-function shortJsonpGet(action, params, timeoutMs=10000){
-  return new Promise(resolve=>{
-    const cb='__vt_short_cb_'+uid(12);
-    const script=document.createElement('script');
-    let settled = false;
-    let timer = null;
-
-    const cleanup = ()=>{
-      settled = true;
-      clearTimeout(timer);
-      script.remove();
-      try{ delete window[cb]; }catch(e){}
-    };
-    const finish = (data)=>{
-      if(settled) return;
-      cleanup();
-      resolve(data);
-    };
-
-    window[cb] = (data)=>finish(data);
-    const q = new URLSearchParams({ ...(params||{}), action: action || '', callback: cb });
-    script.src = SHORT_LINK_API + '?' + q.toString();
-    script.async = true;
-    script.onerror = ()=>finish(null);
-    timer = setTimeout(()=>finish(null), timeoutMs);
-    document.body.appendChild(script);
-  });
-}
-
 function postCreateShortLink(payload, shortId, token){
   return new Promise(resolve=>{
     const frame=document.createElement('iframe');
     frame.name='__vt_short_post_'+uid(12);
     frame.hidden=true;
+    let submitted=false, settled=false;
+    const finish=(ok)=>{
+      if(settled) return;
+      settled=true;
+      clearTimeout(timer);
+      frame.remove();
+      resolve(ok);
+    };
+    frame.onload=()=>{ if(submitted) finish(true); };
+    const timer=setTimeout(()=>finish(false),10000);
     const form=document.createElement('form');
     form.method='POST';
     form.action=SHORT_LINK_API;
@@ -382,9 +363,9 @@ function postCreateShortLink(payload, shortId, token){
     });
     document.body.appendChild(frame);
     document.body.appendChild(form);
+    submitted=true;
     form.submit();
     form.remove();
-    setTimeout(()=>{ frame.remove(); resolve(true); }, 40);
   });
 }
 
@@ -392,26 +373,16 @@ async function createVocaShortLink(payload, token){
   shortLinkError='';
   const encoded=b64enc(signPayload(payload));
   const shortId=randomHexId(20);
-  await postCreateShortLink(encoded, shortId, token);
-
-  const deadline = Date.now() + 15000;
-  while(Date.now() < deadline){
-    const result = await shortJsonpGet('getShortLink', { short_id: shortId }, 5000);
-    if(result && result.ok && result.payload){
-      return location.origin + location.pathname + '?s=' + encodeURIComponent(shortId);
-    }
-    await new Promise(resolve=>setTimeout(resolve, 350));
-  }
-  shortLinkError='단축 링크 저장은 되었으나 조회 확인이 지연되어 실패했습니다.';
-  return null;
+  const posted=await postCreateShortLink(encoded, shortId, token);
+  if(!posted){ shortLinkError='단축 링크 저장 요청이 완료되지 않았습니다.'; return null; }
+  return location.origin + location.pathname + '?s=' + encodeURIComponent(shortId);
 }
 
-async function loadVocaShortLink(shortId){
+function loadVocaShortLink(shortId){
+  if(!/^[a-f0-9]{20}$/.test(shortId)) return renderExpired('유효하지 않은 단축 링크예요.','유효하지 않은 링크입니다');
   app.innerHTML='<div class="flex min-h-[70dvh] items-center justify-center text-sm font-bold text-slate-400">🔗 시험 정보를 불러오는 중…</div>';
-  const result=await shortJsonpGet('getShortLink', { short_id: shortId });
-  if(!result) return renderExpired('단축 링크 서버에서 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.','링크를 불러올 수 없습니다');
-  if(!result.ok) return renderExpired(result.error==='expired' ? '이 단축 링크는 만료되었어요.' : '유효하지 않은 단축 링크예요.',result.error==='expired' ? '만료된 테스트입니다' : '유효하지 않은 링크입니다');
-  startStudentFromEncoded(null,result.payload);
+  const q=new URLSearchParams({action:'openShort',short_id:shortId});
+  location.replace(SHORT_LINK_API+'?'+q.toString());
 }
 
 // 앱 내부 확인창 (브라우저 confirm이 차단되는 환경 대비)
@@ -2060,6 +2031,24 @@ function getShortLink_(e){
   return shortJsonpOutput_({ok:false,error:'not_found'},callback);
 }
 
+function openShort_(e){
+  var id=String(e.parameter.short_id||'');
+  if(!/^[a-f0-9]{20}$/.test(id)) return HtmlService.createHtmlOutput('<p>유효하지 않은 단축 링크입니다.</p>');
+  var sh=shortLinkSheet_(), rows=sh.getDataRange().getValues();
+  for(var i=1;i<rows.length;i++){
+    if(String(rows[i][0])===id){
+      var encoded=String(rows[i][1]||'');
+      var expires=Number(rows[i][3]||0);
+      if(expires && Date.now()>expires) return HtmlService.createHtmlOutput('<p>만료된 테스트입니다. 선생님께 새 링크를 요청해 주세요.</p>');
+      var payload=decodeShortPayload_(encoded);
+      if(!payload || !payload.s) return HtmlService.createHtmlOutput('<p>유효하지 않은 테스트 정보입니다.</p>');
+      var target='${appBase}'+'?session='+encodeURIComponent(String(payload.s))+'&d='+encodeURIComponent(encoded);
+      return HtmlService.createHtmlOutput('<script>location.replace('+JSON.stringify(target)+');<'+'/script>');
+    }
+  }
+  return HtmlService.createHtmlOutput('<p>테스트 정보를 찾지 못했습니다. 선생님께 새 링크를 요청해 주세요.</p>');
+}
+
 function doPost(e){                                // 학생 결과 전송(JSON) 또는 자체 단축 링크 생성
   if(e && e.parameter && e.parameter.action === 'createShortLink') return createShortLink_(e);
   var d;
@@ -2098,6 +2087,7 @@ function doPost(e){                                // 학생 결과 전송(JSON)
 }
 
 function doGet(e){                                  // 짧은 링크 조회 등(GET, 선택 기능)
+  if(e.parameter.action === 'openShort') return openShort_(e);
   if(e.parameter.action === 'getShortLink') return getShortLink_(e);
   var cb = e.parameter.callback || 'callback';
   var out = function(body){

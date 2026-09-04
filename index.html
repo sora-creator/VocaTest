@@ -407,11 +407,11 @@ function pickFolderModal(folders, title='폴더 선택', words=DB.words()){
 function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', words=DB.words()){
   return new Promise(resolve=>{
     const tree = folderTreeFlat(folders);
-    const ids = tree.map(f=>f.id);
     const rootCnt = words.length;
     let sel = new Set();
     let anchor = null;
     let previewId = null; // 넓은 화면에서 옆에 미리보기로 보여줄 폴더(가장 최근에 클릭한 대상) — null이면 "전체 단어장"
+    const collapsed = new Set(); // 폴더명 클릭으로 접힌 폴더 id
     const ov=document.createElement('div');
     ov.className='fixed inset-0 z-[70] flex items-end justify-center bg-slate-900/40 p-4 sm:items-center anim-in';
     document.body.appendChild(ov);
@@ -420,19 +420,22 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
       const prevScroll = ov.querySelector('[data-scroll-area]')?.scrollTop || 0; // 선택할 때마다 다시 그려도 목록이 맨 위로 안 튀도록 유지
       const previewFolder = previewId ? folders.find(f=>f.id===previewId) : null;
       const previewWords = previewFolder ? wordsInFolder(words, folders, previewId, true) : words;
+      const visibleTree = tree.filter(f=> !folderPath(folders,f.id).slice(0,-1).some(parent=>collapsed.has(parent.id)));
+      const visibleIds = visibleTree.map(f=>f.id);
       ov.innerHTML=`<div class="flex max-h-[75vh] w-full max-w-xs flex-col overflow-hidden rounded-3xl bg-white shadow-card lg:max-w-3xl lg:flex-row">
         <div class="flex min-h-0 flex-1 flex-col">
           <div class="shrink-0 px-5 pb-2 pt-5">
             <p class="mb-1 text-center text-sm font-black text-slate-700">${esc(title)}</p>
-            <p class="text-center text-[11px] text-slate-400"><b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
+            <p class="text-center text-[11px] text-slate-400"><b>폴더 클릭</b> 하위폴더 접기/펼치기 · <b>Ctrl+클릭</b> 개별선택 · <b>Shift+클릭</b> 연속선택</p>
           </div>
           <div data-scroll-area class="min-h-0 flex-1 overflow-y-auto px-5">
             <div class="flex flex-col gap-1.5 pb-3">
               <button data-pick-all class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${sel.size===0?'bg-brand-50 text-brand-700':'text-slate-600 hover:bg-slate-50'}">📚 전체 단어장 <span class="text-xs font-normal text-slate-400">(${rootCnt})</span></button>
-              ${tree.map(f=>{
+              ${visibleTree.map(f=>{
                 const cnt = wordsInFolder(words, folders, f.id, true).length;
                 const isSel = sel.has(f.id);
-                return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}">📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
+                const hasKids = folderChildren(folders,f.id).length>0;
+                return `<button data-pick="${f.id}" style="padding-left:${12+f.depth*16}px" class="rounded-xl px-3 py-2.5 text-left text-sm font-bold transition ${isSel?'bg-brand-100 text-brand-700 ring-1 ring-brand-400':'text-slate-600 hover:bg-slate-50'}"><span class="mr-1 inline-block w-3 text-slate-400">${hasKids?(collapsed.has(f.id)?'▸':'▾'):''}</span>📁 ${esc(f.name)} <span class="text-xs font-normal text-slate-400">(${cnt})</span></button>`;
               }).join('')}
             </div>
           </div>
@@ -464,8 +467,8 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
         b.onclick=(e)=>{
           const id=b.dataset.pick;
           if(e.shiftKey && anchor!==null){
-            const ai=ids.indexOf(anchor), bi=ids.indexOf(id);
-            if(ai!==-1 && bi!==-1){ const [a,c]=[ai,bi].sort((x,y)=>x-y); for(let k=a;k<=c;k++) sel.add(ids[k]); }
+            const ai=visibleIds.indexOf(anchor), bi=visibleIds.indexOf(id);
+            if(ai!==-1 && bi!==-1){ const [a,c]=[ai,bi].sort((x,y)=>x-y); for(let k=a;k<=c;k++) sel.add(visibleIds[k]); }
           } else if(e.ctrlKey || e.metaKey){
             if(sel.has(id)) sel.delete(id); else sel.add(id);
             anchor=id;
@@ -473,6 +476,9 @@ function pickFoldersModal(folders, title='폴더 선택 (여러 개 가능)', wo
             sel = new Set([id]); anchor=id;
           }
           previewId = id;
+          if(folderChildren(folders,id).length){
+            if(collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+          }
           render();
         };
       });
@@ -649,6 +655,7 @@ let treeSel = new Set();    // 폴더 트리에서 다중 선택된 폴더 id (�
 let treeAnchor = null;      // 폴더 트리 Shift 범위선택 기준점(폴더 id)
 let treeExpanded = new Set(); // 펼쳐진 폴더 id
 let folderClipboard = null; // {ids:[...], mode:'copy'|'cut'} — Ctrl+C/X/V 및 붙여넣기 버튼용
+let draggingFolderIds = []; // 다중 드래그 중인 폴더 id (dataTransfer를 비우는 브라우저 대비)
 
 function refreshWordsTab(){ const t=document.getElementById('tab'); if(t && teacherTab==='words') renderWords(t); }
 
@@ -756,7 +763,7 @@ function renderWords(root){
         const canOutdent = f.parentId != null;
         const canIndent = sibIdx>0;
         return `
-        <div data-tree-row="${f.id}" style="padding-left:${8+f.depth*18}px"
+        <div data-tree-row="${f.id}" draggable="true" style="padding-left:${8+f.depth*18}px"
           class="flex select-none items-center gap-1.5 rounded-xl py-2 pr-1.5 text-sm transition cursor-pointer ${isSel?'bg-brand-100 ring-1 ring-brand-400':isCur?'bg-brand-50':'hover:bg-slate-50'}">
           <button draggable="false" data-tree-toggle="${f.id}" class="grid h-6 w-6 shrink-0 place-items-center text-slate-400 ${hasKids?'':'invisible'}">${isOpen?'▾':'▸'}</button>
           <span draggable="true" title="드래그해서 이동" class="shrink-0 cursor-grab active:cursor-grabbing">📁</span>
@@ -1012,6 +1019,7 @@ function renderWords(root){
   rootCrumb.addEventListener('drop', e=>{
     e.preventDefault(); clearDropRing(rootCrumb);
     let ids=[]; try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')||'[]'); }catch(_){}
+    if(!ids.length) ids=draggingFolderIds.slice();
     if(!ids.length) return;
     const { moved, blocked } = reparentFolders(ids, null);
     if(moved) toast(`${moved}개 폴더를 최상위로 이동했어요 📁`);
@@ -1058,19 +1066,23 @@ function renderWords(root){
     });
     row.addEventListener('dragstart', e=>{
       const dragIds = treeSel.has(id) ? [...treeSel] : [id];
+      if(!treeSel.has(id)){ treeSel.clear(); treeSel.add(id); treeAnchor=id; }
+      draggingFolderIds = dragIds;
       e.dataTransfer.setData('text/plain', JSON.stringify(dragIds));
       e.dataTransfer.effectAllowed='move';
     });
+    row.addEventListener('dragend', ()=>{ draggingFolderIds=[]; });
     row.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; row.classList.add('ring-2','ring-brand-400'); });
     row.addEventListener('dragleave', ()=> clearDropRing(row));
     row.addEventListener('drop', e=>{
       e.preventDefault(); clearDropRing(row);
       let ids=[]; try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')||'[]'); }catch(_){}
+      if(!ids.length) ids=draggingFolderIds.slice();
       if(!ids.length) return;
       const { moved, blocked } = reparentFolders(ids, id);
       if(moved) toast(`${moved}개 폴더 이동했어요 📁`);
       if(blocked) toast(`${blocked}개는 하위 폴더로 옮길 수 없어요`,'bad');
-      if(moved) renderWords(root);
+      if(moved){ treeExpanded.add(id); renderWords(root); }
     });
   });
 
